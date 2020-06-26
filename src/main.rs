@@ -29,15 +29,23 @@ struct LogEntry {
     extra_data: String,
 }
 
-async fn get_entries_from(start: usize) -> Result<Logs, Box<dyn std::error::Error>> {
+async fn get_entries_from(
+    base_url: &str,
+    start: usize,
+) -> Result<Logs, Box<dyn std::error::Error>> {
     let response = reqwest::get(&format!(
-        "http://localhost:5000/logs/argon2020/ct/v1/get-entries?start={}&end={}",
+        "{}/get-entries?start={}&end={}",
+        base_url,
         start,
         start + 31
     ))
     .await?;
     if response.status() != 200 {
-        return Err("An error occurred retrieving logs".into());
+        let body = response
+            .text()
+            .await
+            .map_or_else(|_| "unknown".into(), |body| format!("{}", body));
+        return Err(format!("An error occurred retrieving logs: {}", body).into());
     }
     let logs = response.json::<Logs>().await?;
     Ok(logs)
@@ -48,44 +56,47 @@ fn main() {}
 #[cfg(test)]
 mod test {
     use crate::{get_entries_from, LogEntry, Logs};
-    use httpmock::Method::GET;
-    use httpmock::{mock, with_mock_server};
     use tokio;
+    use wiremock::{
+        matchers::{method, path, query_param},
+        Mock, MockServer, ResponseTemplate,
+    };
 
     const LEAF_INPUT: &str = include_str!("../resources/leaf_input_with_cert");
 
     #[tokio::test]
-    #[with_mock_server]
     async fn should_fail_if_log_retrieval_fails() {
-        let _ = mock(GET, "/logs/argon2020/ct/v1/get-entries")
-            .expect_query_param("start", "0")
-            .expect_query_param("end", "31")
-            .return_status(400)
-            .create();
-        let result = get_entries_from(0).await;
+        let server_error = "oh no";
+        let mock_server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/get-entries"))
+            .and(query_param("start", "0"))
+            .and(query_param("end", "31"))
+            .respond_with(ResponseTemplate::new(400).set_body_string(server_error))
+            .mount(&mock_server)
+            .await;
+        let result = get_entries_from(&mock_server.uri(), 0).await;
         assert!(result.is_err());
         assert_eq!(
             format!("{}", result.err().unwrap()),
-            "An error occurred retrieving logs"
+            format!("An error occurred retrieving logs: {}", server_error)
         );
     }
 
     #[tokio::test]
-    #[with_mock_server]
     async fn should_fail_if_body_is_not_an_expected_value() {
-        let body = vec![0, 0];
-        let _ = mock(GET, "/logs/argon2020/ct/v1/get-entries")
-            .expect_query_param("start", "0")
-            .expect_query_param("end", "31")
-            .return_json_body(&body)
-            .return_status(200)
-            .create();
-        let result = get_entries_from(0).await;
+        let body: Vec<u32> = vec![0, 0];
+        let mock_server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/get-entries"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&body))
+            .mount(&mock_server)
+            .await;
+        let result = get_entries_from(&mock_server.uri(), 0).await;
         assert!(result.is_err());
     }
 
     #[tokio::test]
-    #[with_mock_server]
     async fn should_return_logs() {
         let body = Logs {
             entries: vec![LogEntry {
@@ -93,14 +104,15 @@ mod test {
                 extra_data: "".to_owned(),
             }],
         };
-        let _ = mock(GET, "/logs/argon2020/ct/v1/get-entries")
-            .expect_query_param("start", "0")
-            .expect_query_param("end", "31")
-            .return_json_body(&body)
-            .return_status(200)
-            .create();
-        let result = get_entries_from(0).await;
+        let mock_server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/get-entries"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&body))
+            .mount(&mock_server)
+            .await;
+        let result = get_entries_from(&mock_server.uri(), 0).await;
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), body);
     }
 }
+
