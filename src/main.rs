@@ -1,118 +1,135 @@
-use serde::{Deserialize, Serialize};
+mod client;
+mod persist;
+use client::{CtClient, HttpCtClient};
+use persist::Store;
+use std::{
+    error::Error,
+    path::{Path, PathBuf},
+};
 
-#[derive(Debug, Deserialize, Serialize, Eq, PartialEq)]
-struct Logs {
-    entries: Vec<LogEntry>,
-}
+const CTLOGS_LEAF_DIR: &str = ".ctlogs";
+const ARGON_CSV_FILE: &str = "argon.csv";
+const RETRIEVAL_LIMIT: usize = 30;
 
-#[derive(Debug, Deserialize, Serialize, Eq, PartialEq)]
-struct LogEntry {
-    /// The `leaf_input` field is a `String` of base64 encoded data. The data is a DER encoded
-    /// MerkleTreeHeader, which has the following structure.
-    /// ```
-    /// [0] [1] [2..=9] [10..=11] [12..=14] [15..]
-    /// |   |     |        |         |      |
-    /// |   |     |        |         |      |- rest
-    /// |   |     |        |         |      
-    /// |   |     |        |         |- length
-    /// |   |     |        |               
-    /// |   |     |        | - log entry type
-    /// |   |     |                       
-    /// |   |     | - timestamp
-    /// |   |                            
-    /// |   | - signature type
-    /// |                               
-    /// | - version
-    /// ```
-    ///
-    leaf_input: String,
-    extra_data: String,
-}
-
-async fn get_entries_from(
-    base_url: &str,
-    start: usize,
-) -> Result<Logs, Box<dyn std::error::Error>> {
-    let response = reqwest::get(&format!(
-        "{}/get-entries?start={}&end={}",
-        base_url,
-        start,
-        start + 31
-    ))
-    .await?;
-    if response.status() != 200 {
-        let body = response
-            .text()
-            .await
-            .map_or_else(|_| "unknown".into(), |body| format!("{}", body));
-        return Err(format!("An error occurred retrieving logs: {}", body).into());
+async fn execute<P: AsRef<Path>>(dir: P, client: impl CtClient) -> Result<(), Box<dyn Error>> {
+    let mut argon_logs_path = PathBuf::from(dir.as_ref());
+    argon_logs_path.push(CTLOGS_LEAF_DIR);
+    if !std::path::Path::exists(&argon_logs_path) {
+        std::fs::create_dir_all(&argon_logs_path)?;
     }
-    let logs = response.json::<Logs>().await?;
-    Ok(logs)
+    argon_logs_path.push(ARGON_CSV_FILE);
+    let mut store = Store::new(argon_logs_path);
+    let count = store.count();
+    let mut start = if count == 0 { 0 } else { count - 1 };
+    let tree_size = client.get_tree_size().await?;
+    let mut end = start
+        + if tree_size > RETRIEVAL_LIMIT {
+            RETRIEVAL_LIMIT
+        } else {
+            tree_size - 1
+        };
+    loop {
+        println!("start {} end {}", start, end);
+        if end >= tree_size {
+            // TODO: we should continue to call tree_size as logs
+            // are updated in realtime. This will only work for inactive
+            // logs.
+            println!("Log is empty.");
+            break;
+        }
+        let logs = client.get_entries(start, end).await?;
+        let length = logs.entries.len();
+        store.write_logs(logs)?;
+        start += length + 1;
+        end += length + 1;
+    }
+    Ok(())
 }
 
-fn main() {}
+const ARGON_CT_LOGS_URL: &str = "https://ct.googleapis.com/logs/argon2020/ct/v1";
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn Error>> {
+    let client = HttpCtClient::new(ARGON_CT_LOGS_URL);
+    let dir = "/var/tmp/";
+    execute(dir, client).await
+}
 
 #[cfg(test)]
 mod test {
-    use crate::{get_entries_from, LogEntry, Logs};
-    use tokio;
-    use wiremock::{
-        matchers::{method, path, query_param},
-        Mock, MockServer, ResponseTemplate,
+    use crate::{
+        client::{CtClient, LogEntry, Logs},
+        execute,
     };
+    use async_trait::async_trait;
+    use std::{
+        fs::OpenOptions,
+        io::{BufRead, BufReader},
+        path::PathBuf,
+    };
+    use tempfile::tempdir;
+    use tokio;
 
+    const CTLOGS_LEAF: &str = ".ctlogs";
     const LEAF_INPUT: &str = include_str!("../resources/leaf_input_with_cert");
 
+    #[derive(Default)]
+    struct FakeCtClient {
+        tree_size: usize,
+    }
+
+    #[async_trait]
+    impl CtClient for FakeCtClient {
+        async fn get_entries(
+            &self,
+            _: usize,
+            _: usize,
+        ) -> Result<crate::client::Logs, Box<dyn std::error::Error>> {
+            let mut entries = Vec::new();
+            for _ in 0..self.tree_size {
+                let entry = LogEntry {
+                    leaf_input: LEAF_INPUT.trim().to_owned(),
+                    extra_data: "test".to_owned(),
+                };
+                entries.push(entry);
+            }
+            Ok(Logs { entries })
+        }
+        async fn get_tree_size(&self) -> Result<usize, Box<dyn std::error::Error>> {
+            Ok(self.tree_size)
+        }
+    }
+
     #[tokio::test]
-    async fn should_fail_if_log_retrieval_fails() {
-        let server_error = "oh no";
-        let mock_server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .and(path("/get-entries"))
-            .and(query_param("start", "0"))
-            .and(query_param("end", "31"))
-            .respond_with(ResponseTemplate::new(400).set_body_string(server_error))
-            .mount(&mock_server)
-            .await;
-        let result = get_entries_from(&mock_server.uri(), 0).await;
-        assert!(result.is_err());
-        assert_eq!(
-            format!("{}", result.err().unwrap()),
-            format!("An error occurred retrieving logs: {}", server_error)
+    async fn csv_file_should_contain_tree_size_plus_one_rows_once_complete() {
+        let tree_size = 2;
+        let expected_rows = 3; // tree_size + header row
+        let dir = tempdir().unwrap();
+        let mut argon_csv = PathBuf::from(dir.path().clone());
+        argon_csv.push(CTLOGS_LEAF);
+        argon_csv.push("argon.csv");
+        let mut client = FakeCtClient::default();
+        client.tree_size = tree_size;
+        let result = execute(&dir, client).await;
+        let file = OpenOptions::new().read(true).open(argon_csv).unwrap();
+        let count = BufReader::new(&file).lines().count();
+        assert!(result.is_ok());
+        assert_eq!(count, expected_rows);
+    }
+
+    #[tokio::test]
+    async fn should_create_directory_if_it_doesnt_exist() {
+        let dir = tempdir().unwrap();
+        let mut expected_dir = PathBuf::from(dir.path().clone());
+        expected_dir.push(CTLOGS_LEAF);
+        let mut client = FakeCtClient::default();
+        client.tree_size = 1;
+        let result = execute(&dir, client).await;
+        assert!(result.is_ok());
+        assert!(
+            std::path::Path::exists(&expected_dir),
+            "directory {:?} does not exist",
+            &expected_dir
         );
     }
-
-    #[tokio::test]
-    async fn should_fail_if_body_is_not_an_expected_value() {
-        let body: Vec<u32> = vec![0, 0];
-        let mock_server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .and(path("/get-entries"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(&body))
-            .mount(&mock_server)
-            .await;
-        let result = get_entries_from(&mock_server.uri(), 0).await;
-        assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn should_return_logs() {
-        let body = Logs {
-            entries: vec![LogEntry {
-                leaf_input: LEAF_INPUT.to_owned(),
-                extra_data: "".to_owned(),
-            }],
-        };
-        let mock_server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .and(path("/get-entries"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(&body))
-            .mount(&mock_server)
-            .await;
-        let result = get_entries_from(&mock_server.uri(), 0).await;
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), body);
-    }
 }
-
