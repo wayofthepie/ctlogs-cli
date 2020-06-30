@@ -8,7 +8,7 @@ edition = "2018"
 
 [dependencies]
 base64 = "0.12.2"
-der-parser = "4.0.0"
+der-parser = "4.0.1"
 reqwest = { version = "0.10.6", features = [ "json" ] }
 serde = { version = "1.0.112", features = [ "derive" ] }
 tokio = { version = "0.2.21", features = [ "macros" ] }

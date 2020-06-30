@@ -397,7 +397,7 @@ dependencies = [
  "async-trait",
  "base64 0.12.3",
  "csv",
- "der-parser 4.0.0",
+ "der-parser 4.0.1",
  "httpmock",
  "reqwest",
  "serde",
@@ -432,9 +432,9 @@ dependencies = [
 
 [[package]]
 name = "der-parser"
-version = "4.0.0"
+version = "4.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3ae822698fe2fa899ac2f33698d0b7b2c6d3f3d17167f3e5a3bda9d832e75103"
+checksum = "48a7254a5674422c72b29fec19f58ce67d842bd07908f4565b11464c10342d36"
 dependencies = [
  "der-oid-macro",
  "nom",
