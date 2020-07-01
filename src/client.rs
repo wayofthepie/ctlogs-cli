@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::error::Error;
 
@@ -44,12 +45,15 @@ pub trait CtClient {
 
 pub struct HttpCtClient {
     base_url: String,
+    client: Client,
 }
 
 impl HttpCtClient {
     pub fn new<S: Into<String>>(base_url: S) -> Self {
+        let client = Client::new();
         Self {
             base_url: base_url.into(),
+            client,
         }
     }
 }
@@ -57,11 +61,14 @@ impl HttpCtClient {
 #[async_trait]
 impl CtClient for HttpCtClient {
     async fn get_entries(&self, start: usize, end: usize) -> Result<Logs, Box<dyn Error>> {
-        let response = reqwest::get(&format!(
-            "{}/get-entries?start={}&end={}",
-            self.base_url, start, end
-        ))
-        .await?;
+        let response = self
+            .client
+            .get(&format!(
+                "{}/get-entries?start={}&end={}",
+                self.base_url, start, end
+            ))
+            .send()
+            .await?;
         if response.status() != 200 {
             let body = response
                 .text()
@@ -77,7 +84,11 @@ impl CtClient for HttpCtClient {
     }
 
     async fn get_tree_size(&self) -> Result<usize, Box<dyn Error>> {
-        let response = reqwest::get(&format!("{}/get-sth", self.base_url)).await?;
+        let response = self
+            .client
+            .get(&format!("{}/get-sth", self.base_url))
+            .send()
+            .await?;
         if response.status() != 200 {
             let body = response
                 .text()
@@ -93,6 +104,7 @@ impl CtClient for HttpCtClient {
 mod test {
     use super::{Logs, STH};
     use crate::{client::LogEntry, CtClient, HttpCtClient};
+    use reqwest::Client;
     use tokio;
     use wiremock::{
         matchers::{method, path, query_param},
@@ -112,6 +124,7 @@ mod test {
             .await;
 
         let client = HttpCtClient {
+            client: Client::new(),
             base_url: mock_server.uri(),
         };
         let result = client.get_tree_size().await;
@@ -135,6 +148,7 @@ mod test {
             .await;
 
         let client = HttpCtClient {
+            client: Client::new(),
             base_url: mock_server.uri(),
         };
         let result = client.get_tree_size().await;
@@ -154,6 +168,7 @@ mod test {
             .mount(&mock_server)
             .await;
         let client = HttpCtClient {
+            client: Client::new(),
             base_url: mock_server.uri(),
         };
         let result = client.get_entries(0, 1).await;
@@ -174,6 +189,7 @@ mod test {
             .mount(&mock_server)
             .await;
         let client = HttpCtClient {
+            client: Client::new(),
             base_url: mock_server.uri(),
         };
         let result = client.get_entries(0, 1).await;
@@ -197,6 +213,7 @@ mod test {
             .mount(&mock_server)
             .await;
         let client = HttpCtClient {
+            client: Client::new(),
             base_url: mock_server.uri(),
         };
         let result = client.get_entries(0, 1).await;
@@ -230,6 +247,7 @@ mod test {
             .mount(&mock_server)
             .await;
         let client = HttpCtClient {
+            client: Client::new(),
             base_url: mock_server.uri(),
         };
         let result = client.get_entries(0, 1).await;
@@ -237,3 +255,4 @@ mod test {
         assert_eq!(result.unwrap(), body);
     }
 }
+
