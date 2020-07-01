@@ -50,11 +50,11 @@ async fn producer(
     Ok(())
 }
 
-const ARGON_CT_LOGS_URL: &str = "https://ct.googleapis.com/logs/argon2020/ct/v1";
+const CT_LOGS_URL: &str = "https://ct.googleapis.com/aviator/ct/v1";
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    let client = HttpCtClient::new(ARGON_CT_LOGS_URL);
+    let client = HttpCtClient::new(CT_LOGS_URL);
     let (tx, rx) = mpsc::channel(100);
     let (producer_result, consumer_result) = join!(producer(client, tx), consumer("test.gz", rx));
     match (producer_result, consumer_result) {
