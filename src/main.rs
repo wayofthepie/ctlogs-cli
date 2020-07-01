@@ -45,8 +45,6 @@ mod test {
     use async_trait::async_trait;
     use tokio::{self, sync::mpsc};
 
-    const LEAF_INPUT: &str = include_str!("../resources/leaf_input_with_cert");
-
     #[derive(Default)]
     struct FakeCtClient {
         tree_size: usize,
@@ -62,13 +60,14 @@ mod test {
             let mut entries = Vec::new();
             for _ in start..=end {
                 let entry = LogEntry {
-                    leaf_input: LEAF_INPUT.trim().to_owned(),
-                    extra_data: "test".to_owned(),
+                    leaf_input: "".to_owned(),
+                    extra_data: "".to_owned(),
                 };
                 entries.push(entry);
             }
             Ok(Logs { entries })
         }
+
         async fn get_tree_size(&self) -> Result<usize, Box<dyn std::error::Error>> {
             Ok(self.tree_size)
         }
