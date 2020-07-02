@@ -1,7 +1,12 @@
 mod client;
 use async_compression::tokio_02::write::GzipEncoder;
 use client::{CtClient, HttpCtClient, Logs};
-use std::{error::Error, path::Path};
+use futures::{stream::FuturesUnordered, StreamExt};
+use std::{
+    error::Error,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use tokio::io::AsyncWriteExt;
 use tokio::{fs::OpenOptions, join, sync::mpsc};
 
@@ -11,11 +16,13 @@ async fn consumer<P: AsRef<Path>>(
     path: P,
     mut chan: mpsc::Receiver<Logs>,
 ) -> Result<(), Box<dyn Error>> {
+    let mut path = PathBuf::from(path.as_ref());
+    path.push("logs.gz");
     let writer = OpenOptions::new()
         .create(true)
         .append(true)
         .write(true)
-        .open(path.as_ref())
+        .open(&path)
         .await?;
     let mut gzip = GzipEncoder::new(writer);
     while let Some(logs) = chan.recv().await {
@@ -29,19 +36,32 @@ async fn consumer<P: AsRef<Path>>(
 }
 
 async fn producer(
-    client: impl CtClient,
+    client: Arc<impl CtClient>,
     mut chan: mpsc::Sender<Logs>,
 ) -> Result<(), Box<dyn Error>> {
     let tree_size = client.get_tree_size().await?;
     let (mut div, rem) = (tree_size / RETRIEVAL_LIMIT, tree_size % RETRIEVAL_LIMIT);
     let mut start = 0;
     let mut end = start + RETRIEVAL_LIMIT - 1;
+    let mut queue = FuturesUnordered::new();
     while div != 0 {
-        let logs = client.get_entries(start, end).await?;
-        chan.send(logs).await?;
+        let c = client.clone();
+        queue.push(async move {
+            // TODO Retry this on failure
+            // Also, don't unwrap!
+            c.get_entries(start, end).await.unwrap()
+        });
+        if queue.len() == 12 {
+            while let Some(logs) = queue.next().await {
+                chan.send(logs).await?;
+            }
+        }
         start += RETRIEVAL_LIMIT;
         end = start + RETRIEVAL_LIMIT - 1;
         div -= 1;
+    }
+    while let Some(logs) = queue.next().await {
+        chan.send(logs).await?;
     }
     if rem != 0 {
         let logs = client.get_entries(start, start + rem - 1).await?;
@@ -50,13 +70,14 @@ async fn producer(
     Ok(())
 }
 
-const CT_LOGS_URL: &str = "https://ct.googleapis.com/aviator/ct/v1";
+const CT_LOGS_URL: &str = "https://ct.googleapis.com/logs/argon2020/ct/v1";
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let client = HttpCtClient::new(CT_LOGS_URL);
     let (tx, rx) = mpsc::channel(100);
-    let (producer_result, consumer_result) = join!(producer(client, tx), consumer("test.gz", rx));
+    let (producer_result, consumer_result) =
+        join!(producer(Arc::new(client), tx), consumer(".", rx));
     match (producer_result, consumer_result) {
         (Ok(_), Ok(_)) => Ok(()),
         _ => Err("Error occurred!".into()),
@@ -71,6 +92,7 @@ mod test {
     };
     use async_compression::tokio_02::bufread::GzipDecoder;
     use async_trait::async_trait;
+    use std::sync::Arc;
     use tokio::io::AsyncReadExt;
     use tokio::{self, fs::OpenOptions, io::BufReader, sync::mpsc};
 
@@ -107,8 +129,7 @@ mod test {
     ) {
         let expected_data = "test";
         let dir = tempfile::tempdir().unwrap();
-        let mut path = dir.into_path();
-        path.push("test.gz");
+        let path = dir.into_path();
         let p = path.clone();
         let (mut tx, rx) = mpsc::channel(100);
         tx.send(Logs {
@@ -122,6 +143,8 @@ mod test {
         let handle = tokio::spawn(async move { consumer(&p, rx).await.unwrap() });
         drop(tx);
         handle.await.unwrap();
+        let mut path = path.to_owned();
+        path.push("logs.gz");
         let file = OpenOptions::new().read(true).open(&path).await.unwrap();
         let mut decoder = GzipDecoder::new(BufReader::new(file));
         let mut actual = String::new();
@@ -131,10 +154,10 @@ mod test {
 
     #[tokio::test]
     async fn producer_should_return_all_logs() {
-        let tree_size = 200;
+        let tree_size = 2341;
         let client = FakeCtClient { tree_size };
         let (tx, mut rx) = mpsc::channel(100);
-        producer(client, tx).await.unwrap();
+        producer(Arc::new(client), tx).await.unwrap();
         let mut count = 0;
         while let Some(logs) = rx.recv().await {
             count += logs.entries.len();
