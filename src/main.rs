@@ -47,12 +47,11 @@ async fn producer(
     while div != 0 {
         let c = client.clone();
         queue.push(async move {
-            // TODO Retry this on failure
-            // Also, don't unwrap!
-            c.get_entries(start, end).await.unwrap()
+            let logs = c.get_entries(start, end).await?;
+            Ok::<Logs, Box<dyn Error>>(logs)
         });
         if queue.len() == 12 {
-            while let Some(logs) = queue.next().await {
+            while let Some(Ok(logs)) = queue.next().await {
                 chan.send(logs).await?;
             }
         }
@@ -60,7 +59,7 @@ async fn producer(
         end = start + RETRIEVAL_LIMIT - 1;
         div -= 1;
     }
-    while let Some(logs) = queue.next().await {
+    while let Some(Ok(logs)) = queue.next().await {
         chan.send(logs).await?;
     }
     if rem != 0 {
