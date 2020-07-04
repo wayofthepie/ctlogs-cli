@@ -123,10 +123,7 @@ mod test {
             .mount(&mock_server)
             .await;
 
-        let client = HttpCtClient {
-            client: Client::new(),
-            base_url: mock_server.uri(),
-        };
+        let client = HttpCtClient::new(mock_server.uri().to_string());
         let result = client.get_tree_size().await;
         assert!(result.is_err());
         assert_eq!(
@@ -146,11 +143,7 @@ mod test {
             }))
             .mount(&mock_server)
             .await;
-
-        let client = HttpCtClient {
-            client: Client::new(),
-            base_url: mock_server.uri(),
-        };
+        let client = HttpCtClient::new(mock_server.uri().to_string());
         let result = client.get_tree_size().await;
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), expected_size);
@@ -167,10 +160,7 @@ mod test {
             .respond_with(ResponseTemplate::new(400).set_body_string(server_error))
             .mount(&mock_server)
             .await;
-        let client = HttpCtClient {
-            client: Client::new(),
-            base_url: mock_server.uri(),
-        };
+        let client = HttpCtClient::new(mock_server.uri().to_string());
         let result = client.get_entries(0, 1).await;
         assert!(result.is_err());
         assert_eq!(
@@ -188,10 +178,7 @@ mod test {
             .respond_with(ResponseTemplate::new(200).set_body_json(&body))
             .mount(&mock_server)
             .await;
-        let client = HttpCtClient {
-            client: Client::new(),
-            base_url: mock_server.uri(),
-        };
+        let client = HttpCtClient::new(mock_server.uri().to_string());
         let result = client.get_entries(0, 1).await;
         assert!(result.is_err());
     }
@@ -212,10 +199,7 @@ mod test {
             .respond_with(ResponseTemplate::new(200).set_body_json(&body))
             .mount(&mock_server)
             .await;
-        let client = HttpCtClient {
-            client: Client::new(),
-            base_url: mock_server.uri(),
-        };
+        let client = HttpCtClient::new(mock_server.uri().to_string());
         let result = client.get_entries(0, 1).await;
         assert!(result.is_err());
         assert_eq!(
@@ -246,13 +230,9 @@ mod test {
             .respond_with(ResponseTemplate::new(200).set_body_json(&body))
             .mount(&mock_server)
             .await;
-        let client = HttpCtClient {
-            client: Client::new(),
-            base_url: mock_server.uri(),
-        };
+        let client = HttpCtClient::new(mock_server.uri().to_string());
         let result = client.get_entries(0, 1).await;
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), body);
     }
 }
-
