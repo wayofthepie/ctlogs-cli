@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use reqwest::Client;
+use reqwest::{Client, Request, Response};
 use serde::{Deserialize, Serialize};
 use std::error::Error;
 
@@ -58,24 +58,62 @@ impl HttpCtClient {
     }
 }
 
+#[cfg(test)]
+const TIMEOUT_MS: u64 = 1;
+
+#[cfg(not(test))]
+const TIMEOUT_MS: u64 = 100;
+const REQUEST_CLONE_ERROR: &str =
+    "An error occurred cloning the client request, this should not happen.";
+const RETRY_LIMIT: u32 = 3;
+
+impl HttpCtClient {
+    async fn request(&self, request: Request) -> Result<reqwest::Response, Box<dyn Error>> {
+        let mut count = 1;
+        loop {
+            let request = request.try_clone().ok_or(REQUEST_CLONE_ERROR)?;
+            let response = self.client.execute(request).await?;
+            match response.status() {
+                http::status::StatusCode::OK => return Ok(response),
+                _ => {
+                    self.handle_error(response, count).await?;
+                    count += 1;
+                }
+            };
+        }
+    }
+
+    async fn handle_error(&self, response: Response, count: u32) -> Result<(), Box<dyn Error>> {
+        let body = response
+            .text()
+            .await
+            .map_or_else(|_| "unknown".into(), |body| body.to_string());
+        let delay = TIMEOUT_MS.pow(count);
+        println!(
+            "Retrying in {}ms because an error occurred: {}",
+            delay, body
+        );
+        tokio::time::delay_for(tokio::time::Duration::from_millis(TIMEOUT_MS.pow(count))).await;
+        if count == RETRY_LIMIT {
+            return Err(format!("An error occurred: {}", body).into());
+        }
+        Ok(())
+    }
+}
+
 #[async_trait]
 impl CtClient for HttpCtClient {
     async fn get_entries(&self, start: usize, end: usize) -> Result<Logs, Box<dyn Error>> {
         let response = self
-            .client
-            .get(&format!(
-                "{}/get-entries?start={}&end={}",
-                self.base_url, start, end
-            ))
-            .send()
+            .request(
+                self.client
+                    .get(&format!(
+                        "{}/get-entries?start={}&end={}",
+                        self.base_url, start, end
+                    ))
+                    .build()?,
+            )
             .await?;
-        if response.status() != 200 {
-            let body = response
-                .text()
-                .await
-                .map_or_else(|_| "unknown".into(), |body| body);
-            return Err(format!("An error occurred retrieving logs: {}", body).into());
-        }
         let logs = response.json::<Logs>().await?;
         if logs.entries.len() < (end - start + 1) {
             return Err("Number of logs retrieved is incorrect".into());
@@ -85,17 +123,12 @@ impl CtClient for HttpCtClient {
 
     async fn get_tree_size(&self) -> Result<usize, Box<dyn Error>> {
         let response = self
-            .client
-            .get(&format!("{}/get-sth", self.base_url))
-            .send()
+            .request(
+                self.client
+                    .get(&format!("{}/get-sth", self.base_url))
+                    .build()?,
+            )
             .await?;
-        if response.status() != 200 {
-            let body = response
-                .text()
-                .await
-                .map_or_else(|_| "unknown".into(), |body| body);
-            return Err(format!("An error occurred retrieving sth: {}", body).into());
-        }
         Ok(response.json::<STH>().await?.tree_size)
     }
 }
@@ -104,7 +137,6 @@ impl CtClient for HttpCtClient {
 mod test {
     use super::{Logs, STH};
     use crate::{client::LogEntry, CtClient, HttpCtClient};
-    use reqwest::Client;
     use tokio;
     use wiremock::{
         matchers::{method, path, query_param},
@@ -112,6 +144,40 @@ mod test {
     };
 
     const LEAF_INPUT: &str = include_str!("../resources/leaf_input_with_cert");
+
+    #[tokio::test]
+    async fn get_entries_should_retry_three_times_if_it_fails() {
+        let server_error = "oh no, sth retrieval error";
+        let mock_server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/get-entries"))
+            .and(query_param("start", "0"))
+            .and(query_param("end", "1"))
+            .respond_with(ResponseTemplate::new(400).set_body_string(server_error))
+            .up_to_n_times(3)
+            .expect(3)
+            .mount(&mock_server)
+            .await;
+        let client = HttpCtClient::new(mock_server.uri().to_string());
+        let result = client.get_entries(0, 1).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn get_num_entries_should_retry_three_times_if_it_fails() {
+        let server_error = "oh no, sth retrieval error";
+        let mock_server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/get-sth"))
+            .respond_with(ResponseTemplate::new(400).set_body_string(server_error))
+            .up_to_n_times(3)
+            .expect(3)
+            .mount(&mock_server)
+            .await;
+        let client = HttpCtClient::new(mock_server.uri().to_string());
+        let result = client.get_tree_size().await;
+        assert!(result.is_err());
+    }
 
     #[tokio::test]
     async fn get_num_entries_should_fail_if_api_call_fails() {
@@ -128,7 +194,7 @@ mod test {
         assert!(result.is_err());
         assert_eq!(
             result.err().unwrap().to_string(),
-            format!("An error occurred retrieving sth: {}", server_error)
+            format!("An error occurred: {}", server_error)
         );
     }
 
@@ -165,7 +231,7 @@ mod test {
         assert!(result.is_err());
         assert_eq!(
             result.err().unwrap().to_string(),
-            format!("An error occurred retrieving logs: {}", server_error)
+            format!("An error occurred: {}", server_error)
         );
     }
 
