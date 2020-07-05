@@ -64,12 +64,17 @@ async fn write_compressed(
     gzip.write_all(b"|").await?;
     gzip.write_all(info.subject.as_bytes()).await?;
     gzip.write_all(b"|").await?;
-    gzip.write_all(info.subject_alt_names[0].as_bytes()).await?;
-    for san in info.subject_alt_names[1..].iter() {
-        gzip.write_all(b",").await?;
-        gzip.write_all(san.as_bytes()).await?;
+    if !info.subject_alt_names.is_empty() {
+        gzip.write_all(info.subject_alt_names[0].as_bytes()).await?;
+        for san in info.subject_alt_names[1..].iter() {
+            gzip.write_all(b",").await?;
+            gzip.write_all(san.as_bytes()).await?;
+        }
+        gzip.write_all(b"|").await?;
+    } else {
+        gzip.write_all(b"").await?;
+        gzip.write_all(b"|").await?;
     }
-    gzip.write_all(b"|").await?;
     gzip.write_all(base64::encode(cert).as_bytes()).await?;
     gzip.write_all(b"\n").await?;
     Ok(())
