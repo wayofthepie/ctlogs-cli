@@ -37,7 +37,8 @@ impl Consumer {
         while let Some(logs) = self.logs_rx.recv().await {
             for entry in logs.entries {
                 let bytes = base64::decode(entry.leaf_input.clone())?;
-                if bytes[10] + bytes[11] != 0 {
+                let entry_type = bytes[10] + bytes[11];
+                if entry_type != 0 {
                     // Found precert, ignore.
                     continue;
                 } else {
