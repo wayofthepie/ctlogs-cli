@@ -64,7 +64,7 @@ impl Producer {
                 let logs = c.get_entries(start, end).await?;
                 Ok::<Logs, Box<dyn Error>>(logs)
             });
-            if queue.len() == 48 {
+            if queue.len() == 12 {
                 while let Some(Ok(logs)) = queue.next().await {
                     self.logs_tx.send(logs).await?;
                 }
