@@ -96,19 +96,16 @@ fn extract_info(tbs_certificate: TbsCertificate) -> Result<CertInfo, Box<dyn Err
     let issuer = tbs_certificate.issuer.to_string();
     let subject = tbs_certificate.subject.to_string();
     for extension in tbs_certificate.extensions {
-        match oid2nid(&extension.oid) {
-            Ok(Nid::SubjectAltName) => {
-                let (_, obj) = der_parser::parse_der(extension.value)?;
-                obj.as_sequence()?
-                    .into_iter()
-                    .for_each(|item| match item.content {
-                        BerObjectContent::Unknown(_, bytes) => {
-                            sans.push(String::from_utf8_lossy(bytes).to_string());
-                        }
-                        _ => println!("Failed to read subject alternative name: {:?}", obj),
-                    });
-            }
-            _ => (),
+        if let Ok(Nid::SubjectAltName) = oid2nid(&extension.oid) {
+            let (_, obj) = der_parser::parse_der(extension.value)?;
+            obj.as_sequence()?
+                .into_iter()
+                .for_each(|item| match item.content {
+                    BerObjectContent::Unknown(_, bytes) => {
+                        sans.push(String::from_utf8_lossy(bytes).to_string());
+                    }
+                    _ => println!("Failed to read subject alternative name: {:?}", obj),
+                });
         }
     }
     Ok(CertInfo::new(issuer, subject, sans))
