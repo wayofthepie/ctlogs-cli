@@ -11,6 +11,7 @@ async-compression = { version = "0.3.5", features = [ "gzip", "tokio-02" ] }
 async-trait = "0.1.36"
 base64 = "0.12.2"
 csv = "1.1.3"
+der-parser = "4.0.1"
 futures = "0.3.5"
 http = "0.2.1"
 reqwest = { version = "0.10.6", features = [ "json", "stream" ] }
