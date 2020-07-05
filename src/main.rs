@@ -8,85 +8,106 @@ use std::{
     sync::Arc,
 };
 use tokio::io::AsyncWriteExt;
-use tokio::{fs::OpenOptions, join, sync::mpsc};
+use tokio::signal::unix::{signal, SignalKind};
+use tokio::{fs::OpenOptions, join, sync::mpsc, sync::oneshot};
 
-const RETRIEVAL_LIMIT: usize = 31;
+const RETRIEVAL_LIMIT: usize = 32;
 const CT_LOGS_URL: &str = "https://ct.googleapis.com/aviator/ct/v1";
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    let client = HttpCtClient::new(CT_LOGS_URL);
+    let client = Box::new(HttpCtClient::new(CT_LOGS_URL));
     let (tx, rx) = mpsc::channel(100);
-    let (producer_result, consumer_result) =
-        join!(producer(Arc::new(client), tx), consumer(".", rx));
+    let (producer_result, consumer_result) = join!(
+        Producer::new(client, tx).produce(),
+        Consumer::new(rx).consume(".")
+    );
     match (producer_result, consumer_result) {
         (Ok(_), Ok(_)) => Ok(()),
         _ => Err("Error occurred!".into()),
     }
 }
 
-async fn producer(
-    client: Arc<impl CtClient>,
-    mut chan: mpsc::Sender<Logs>,
-) -> Result<(), Box<dyn Error>> {
-    let tree_size = client.get_tree_size().await?;
-    let (mut div, rem) = (tree_size / RETRIEVAL_LIMIT, tree_size % RETRIEVAL_LIMIT);
-    let mut start = 0;
-    let mut end = start + RETRIEVAL_LIMIT - 1;
-    let mut queue = FuturesUnordered::new();
-    while div != 0 {
-        let c = client.clone();
-        queue.push(async move {
-            let logs = c.get_entries(start, end).await?;
-            Ok::<Logs, Box<dyn Error>>(logs)
-        });
-        if queue.len() == 12 {
-            while let Some(Ok(logs)) = queue.next().await {
-                chan.send(logs).await?;
-            }
-        }
-        start += RETRIEVAL_LIMIT;
-        end = start + RETRIEVAL_LIMIT - 1;
-        div -= 1;
-    }
-    while let Some(Ok(logs)) = queue.next().await {
-        chan.send(logs).await?;
-    }
-    if rem != 0 {
-        let logs = client.get_entries(start, start + rem - 1).await?;
-        chan.send(logs).await?;
-    }
-    Ok(())
+struct Producer {
+    client: Arc<Box<dyn CtClient>>,
+    chan: mpsc::Sender<Logs>,
 }
 
-async fn consumer<P: AsRef<Path>>(
-    path: P,
-    mut chan: mpsc::Receiver<Logs>,
-) -> Result<(), Box<dyn Error>> {
-    let mut path = PathBuf::from(path.as_ref());
-    path.push("logs.gz");
-    let writer = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .write(true)
-        .open(&path)
-        .await?;
-    let mut gzip = GzipEncoder::new(writer);
-    while let Some(logs) = chan.recv().await {
-        for entry in logs.entries {
-            gzip.write_all(entry.leaf_input.as_bytes()).await?;
-            gzip.write_all(b"\n").await?;
+impl Producer {
+    fn new(client: Box<dyn CtClient>, chan: mpsc::Sender<Logs>) -> Self {
+        Self {
+            client: Arc::new(client),
+            chan,
         }
     }
-    gzip.shutdown().await?;
-    Ok(())
+
+    async fn produce(mut self) -> Result<(), Box<dyn Error>> {
+        let tree_size = self.client.get_tree_size().await?;
+        let (mut div, rem) = (tree_size / RETRIEVAL_LIMIT, tree_size % RETRIEVAL_LIMIT);
+        let mut start = 0;
+        let mut end = start + RETRIEVAL_LIMIT - 1;
+        let mut queue = FuturesUnordered::new();
+        while div != 0 {
+            let c = self.client.clone();
+            queue.push(async move {
+                let logs = c.get_entries(start, end).await?;
+                Ok::<Logs, Box<dyn Error>>(logs)
+            });
+            if queue.len() == 12 {
+                while let Some(Ok(logs)) = queue.next().await {
+                    self.chan.send(logs).await?;
+                }
+            }
+            start += RETRIEVAL_LIMIT;
+            end = start + RETRIEVAL_LIMIT - 1;
+            div -= 1;
+        }
+        while let Some(Ok(logs)) = queue.next().await {
+            self.chan.send(logs).await?;
+        }
+        if rem != 0 {
+            let logs = self.client.get_entries(start, start + rem - 1).await?;
+            self.chan.send(logs).await?;
+        }
+        Ok(())
+    }
+}
+
+struct Consumer {
+    chan: mpsc::Receiver<Logs>,
+}
+
+impl Consumer {
+    fn new(chan: mpsc::Receiver<Logs>) -> Self {
+        Self { chan }
+    }
+
+    async fn consume<P: AsRef<Path>>(mut self, path: P) -> Result<(), Box<dyn Error>> {
+        let mut path = PathBuf::from(path.as_ref());
+        path.push("logs.gz");
+        let writer = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .write(true)
+            .open(&path)
+            .await?;
+        let mut gzip = GzipEncoder::new(writer);
+        while let Some(logs) = self.chan.recv().await {
+            for entry in logs.entries {
+                gzip.write_all(entry.leaf_input.as_bytes()).await?;
+                gzip.write_all(b"\n").await?;
+            }
+        }
+        gzip.shutdown().await?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
 mod test {
     use crate::{
         client::{CtClient, LogEntry, Logs},
-        consumer, producer,
+        Consumer, Producer,
     };
     use async_compression::tokio_02::bufread::GzipDecoder;
     use async_trait::async_trait;
@@ -138,7 +159,7 @@ mod test {
         })
         .await
         .unwrap();
-        let handle = tokio::spawn(async move { consumer(&p, rx).await.unwrap() });
+        let handle = tokio::spawn(async move { Consumer::new(rx).consume(&p).await.unwrap() });
         drop(tx);
         handle.await.unwrap();
         let mut path = path.to_owned();
@@ -153,9 +174,9 @@ mod test {
     #[tokio::test]
     async fn producer_should_return_all_logs() {
         let tree_size = 2341;
-        let client = FakeCtClient { tree_size };
+        let client = Box::new(FakeCtClient { tree_size });
         let (tx, mut rx) = mpsc::channel(100);
-        producer(Arc::new(client), tx).await.unwrap();
+        Producer::new(client, tx).produce().await.unwrap();
         let mut count = 0;
         while let Some(logs) = rx.recv().await {
             count += logs.entries.len();
