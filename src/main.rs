@@ -11,28 +11,18 @@ use tokio::io::AsyncWriteExt;
 use tokio::{fs::OpenOptions, join, sync::mpsc};
 
 const RETRIEVAL_LIMIT: usize = 31;
+const CT_LOGS_URL: &str = "https://ct.googleapis.com/aviator/ct/v1";
 
-async fn consumer<P: AsRef<Path>>(
-    path: P,
-    mut chan: mpsc::Receiver<Logs>,
-) -> Result<(), Box<dyn Error>> {
-    let mut path = PathBuf::from(path.as_ref());
-    path.push("logs.gz");
-    let writer = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .write(true)
-        .open(&path)
-        .await?;
-    let mut gzip = GzipEncoder::new(writer);
-    while let Some(logs) = chan.recv().await {
-        for entry in logs.entries {
-            gzip.write_all(entry.leaf_input.as_bytes()).await?;
-            gzip.write_all(b"\n").await?;
-        }
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn Error>> {
+    let client = HttpCtClient::new(CT_LOGS_URL);
+    let (tx, rx) = mpsc::channel(100);
+    let (producer_result, consumer_result) =
+        join!(producer(Arc::new(client), tx), consumer(".", rx));
+    match (producer_result, consumer_result) {
+        (Ok(_), Ok(_)) => Ok(()),
+        _ => Err("Error occurred!".into()),
     }
-    gzip.shutdown().await?;
-    Ok(())
 }
 
 async fn producer(
@@ -69,18 +59,27 @@ async fn producer(
     Ok(())
 }
 
-const CT_LOGS_URL: &str = "https://ct.googleapis.com/logs/argon2020/ct/v1";
-
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
-    let client = HttpCtClient::new(CT_LOGS_URL);
-    let (tx, rx) = mpsc::channel(100);
-    let (producer_result, consumer_result) =
-        join!(producer(Arc::new(client), tx), consumer(".", rx));
-    match (producer_result, consumer_result) {
-        (Ok(_), Ok(_)) => Ok(()),
-        _ => Err("Error occurred!".into()),
+async fn consumer<P: AsRef<Path>>(
+    path: P,
+    mut chan: mpsc::Receiver<Logs>,
+) -> Result<(), Box<dyn Error>> {
+    let mut path = PathBuf::from(path.as_ref());
+    path.push("logs.gz");
+    let writer = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .write(true)
+        .open(&path)
+        .await?;
+    let mut gzip = GzipEncoder::new(writer);
+    while let Some(logs) = chan.recv().await {
+        for entry in logs.entries {
+            gzip.write_all(entry.leaf_input.as_bytes()).await?;
+            gzip.write_all(b"\n").await?;
+        }
     }
+    gzip.shutdown().await?;
+    Ok(())
 }
 
 #[cfg(test)]
