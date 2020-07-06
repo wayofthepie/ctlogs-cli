@@ -47,6 +47,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "async-dup"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a3d3732b72c84d8ed5808e59cda61b389a9358f5b54dd567016cba7f12e997ee"
+dependencies = [
+ "futures-io",
+ "simple-mutex",
+]
+
+[[package]]
 name = "async-h1"
 version = "1.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -398,6 +408,7 @@ name = "ctlogs"
 version = "0.1.0"
 dependencies = [
  "async-compression",
+ "async-dup",
  "async-trait",
  "base64 0.12.3",
  "csv",
@@ -406,6 +417,7 @@ dependencies = [
  "http",
  "reqwest",
  "serde",
+ "serde_json",
  "tempfile",
  "tokio",
  "wiremock",
@@ -462,6 +474,12 @@ checksum = "e8ac63f94732332f44fe654443c46f6375d1939684c17b0afb6cb56b0456e171"
 dependencies = [
  "cfg-if",
 ]
+
+[[package]]
+name = "event-listener"
+version = "2.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "699d84875f1b72b4da017e6b0f77dfa88c0137f089958a88974d15938cbc2976"
 
 [[package]]
 name = "fastrand"
@@ -1522,9 +1540,9 @@ dependencies = [
 
 [[package]]
 name = "serde_json"
-version = "1.0.55"
+version = "1.0.56"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ec2c5d7e739bc07a3e73381a39d61fdb5f671c60c1df26a130690665803d8226"
+checksum = "3433e879a558dde8b5e8feb2a04899cf34fdde1fafb894687e52105fc1162ac3"
 dependencies = [
  "itoa",
  "ryu",
@@ -1551,6 +1569,15 @@ checksum = "94f478ede9f64724c5d173d7bb56099ec3e2d9fc2774aac65d34b8b890405f41"
 dependencies = [
  "arc-swap",
  "libc",
+]
+
+[[package]]
+name = "simple-mutex"
+version = "1.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "38aabbeafa6f6dead8cebf246fe9fae1f9215c8d29b3a69f93bd62a9e4a3dcd6"
+dependencies = [
+ "event-listener",
 ]
 
 [[package]]
