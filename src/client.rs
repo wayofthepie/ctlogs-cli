@@ -136,7 +136,7 @@ impl CtClient for HttpCtClient {
 #[cfg(test)]
 mod test {
     use super::{Logs, STH};
-    use crate::{client::LogEntry, CtClient, HttpCtClient};
+    use crate::client::{CtClient, HttpCtClient, LogEntry};
     use tokio;
     use wiremock::{
         matchers::{method, path, query_param},
