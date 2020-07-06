@@ -41,7 +41,7 @@ impl Consumer {
                         issuer: cert.tbs_certificate.issuer.to_string(),
                         subject: cert.tbs_certificate.subject.to_string(),
                     };
-                    let bytes = serde_json::to_vec(&info).unwrap();
+                    let bytes = serde_json::to_vec(&info)?;
                     gzip.write(&bytes).await?;
                 }
             }
@@ -70,6 +70,7 @@ mod test {
         let mut buf: Vec<u8> = Vec::new();
         let result = consumer.consume(Cursor::new(&mut buf)).await;
         assert!(result.is_ok());
+        assert!(decode(&buf).await.unwrap().is_empty());
     }
 
     #[tokio::test]
