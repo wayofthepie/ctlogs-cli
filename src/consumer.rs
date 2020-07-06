@@ -41,16 +41,22 @@ impl Consumer {
         for logs in self.logs_rx.recv().await {
             for entry in logs.entries {
                 let bytes = base64::decode(entry.leaf_input)?;
-                let start = 15;
-                let length = u32::from_be_bytes([0, bytes[12], bytes[13], bytes[14]]);
-                let end = length as usize + start;
-                let (_, cert) = x509_parser::parse_x509_der(&bytes[start..end])?;
-                let info = CertInfo {
-                    issuer: cert.tbs_certificate.issuer.to_string(),
-                    subject: cert.tbs_certificate.subject.to_string(),
-                };
-                let bytes = serde_json::to_vec(&info).unwrap();
-                gzip.write(&bytes).await?;
+                let entry_type = bytes[10] + bytes[11];
+                if entry_type != 0 {
+                    // Found precert, ignore.
+                    continue;
+                } else {
+                    let start = 15;
+                    let length = u32::from_be_bytes([0, bytes[12], bytes[13], bytes[14]]);
+                    let end = length as usize + start;
+                    let (_, cert) = x509_parser::parse_x509_der(&bytes[start..end])?;
+                    let info = CertInfo {
+                        issuer: cert.tbs_certificate.issuer.to_string(),
+                        subject: cert.tbs_certificate.subject.to_string(),
+                    };
+                    let bytes = serde_json::to_vec(&info).unwrap();
+                    gzip.write(&bytes).await?;
+                }
             }
         }
         gzip.shutdown().await?;
@@ -69,6 +75,26 @@ mod test {
         io::{AsyncReadExt, BufReader},
         sync::mpsc,
     };
+
+    #[tokio::test]
+    async fn consume_should_skip_precerts() {
+        let leaf_input = include_str!("../resources/leaf_input_with_precert").trim();
+        let (mut logs_tx, logs_rx) = mpsc::channel(10);
+        let mut consumer = Consumer::new(logs_rx);
+        logs_tx
+            .send(Logs {
+                entries: vec![LogEntry {
+                    leaf_input: leaf_input.to_owned(),
+                    extra_data: "".to_owned(),
+                }],
+            })
+            .await
+            .unwrap();
+        drop(logs_tx);
+        let mut buf: Vec<u8> = Vec::new();
+        let result = consumer.consume(Cursor::new(&mut buf)).await;
+        assert!(result.is_ok());
+    }
 
     #[tokio::test]
     async fn consume_should_extract_subject() {
