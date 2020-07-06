@@ -1,21 +1,9 @@
 use crate::client::Logs;
 use async_compression::tokio_02::write::GzipEncoder;
-use der_parser::ber::BerObjectContent;
 use serde::{Deserialize, Serialize};
-use std::{
-    error::Error,
-    path::{Path, PathBuf},
-    pin::Pin,
-};
+use std::error::Error;
 use tokio::io::{AsyncWrite, AsyncWriteExt};
-use tokio::{
-    fs::{File, OpenOptions},
-    sync::mpsc,
-};
-use x509_parser::{
-    objects::{oid2nid, Nid},
-    TbsCertificate,
-};
+use tokio::sync::mpsc;
 
 #[derive(Default, Deserialize, Serialize)]
 struct CertInfo {
@@ -28,6 +16,7 @@ pub struct Consumer {
 }
 
 impl Consumer {
+    #[allow(dead_code)]
     pub fn new(logs_rx: mpsc::Receiver<Logs>) -> Self {
         Self { logs_rx }
     }
@@ -38,7 +27,7 @@ impl Consumer {
         writer: impl AsyncWrite + Unpin + Send,
     ) -> Result<(), Box<dyn Error>> {
         let mut gzip = GzipEncoder::new(writer);
-        for logs in self.logs_rx.recv().await {
+        while let Some(logs) = self.logs_rx.recv().await {
             for entry in logs.entries {
                 let bytes = base64::decode(entry.leaf_input)?;
                 let entry_type = bytes[10] + bytes[11];
