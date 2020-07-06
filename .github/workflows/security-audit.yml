@@ -7,7 +7,7 @@ on:
       - "**/Cargo.*"
   pull_request:
     branches:
-      - prime
+      - master
 jobs:
   security_audit:
     runs-on: ubuntu-latest
