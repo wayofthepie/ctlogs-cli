@@ -87,7 +87,7 @@ impl HttpCtClient {
         let body = response
             .text()
             .await
-            .map_or_else(|_| "unknown".into(), |body| body.to_string());
+            .map_or_else(|_| "unknown".into(), |body| body);
         let delay = TIMEOUT_MS.pow(count);
         println!(
             "Retrying in {}ms because an error occurred: {}",
