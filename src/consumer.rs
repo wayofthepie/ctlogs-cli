@@ -16,12 +16,10 @@ pub struct Consumer {
 }
 
 impl Consumer {
-    #[allow(dead_code)]
     pub fn new(logs_rx: mpsc::Receiver<Logs>) -> Self {
         Self { logs_rx }
     }
 
-    #[allow(dead_code)]
     pub async fn consume(
         &mut self,
         writer: impl AsyncWrite + Unpin + Send,
