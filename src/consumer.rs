@@ -20,6 +20,7 @@ use x509_parser::{
 #[derive(Default, Deserialize, Serialize)]
 struct CertInfo {
     pub issuer: String,
+    pub subject: String,
 }
 
 pub struct Consumer {
@@ -46,6 +47,7 @@ impl Consumer {
                 let (_, cert) = x509_parser::parse_x509_der(&bytes[start..end])?;
                 let info = CertInfo {
                     issuer: cert.tbs_certificate.issuer.to_string(),
+                    subject: cert.tbs_certificate.subject.to_string(),
                 };
                 let bytes = serde_json::to_vec(&info).unwrap();
                 gzip.write(&bytes).await?;
@@ -67,6 +69,16 @@ mod test {
         io::{AsyncReadExt, BufReader},
         sync::mpsc,
     };
+
+    #[tokio::test]
+    async fn consume_should_extract_subject() {
+        let mut consumer = init_consumer_with_valid_cert().await;
+        let mut buf: Vec<u8> = Vec::new();
+        let result = consumer.consume(Cursor::new(&mut buf)).await;
+        let info = serde_json::from_slice::<CertInfo>(&decode(&buf).await.unwrap()).unwrap();
+        assert!(result.is_ok());
+        assert_eq!(info.subject, "CN=www.libraryav.com.au");
+    }
 
     #[tokio::test]
     async fn consume_should_extract_issuer() {
