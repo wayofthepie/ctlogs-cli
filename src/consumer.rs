@@ -61,14 +61,14 @@ fn extract_cert_info(cert: TbsCertificate) -> Result<CertInfo, Box<dyn Error>> {
     for extension in cert.extensions {
         if let Ok(Nid::SubjectAltName) = oid2nid(&extension.oid) {
             let (_, obj) = der_parser::parse_der(extension.value)?;
-            obj.as_sequence()?
-                .into_iter()
-                .for_each(|item| match item.content {
+            for item in obj.as_sequence()? {
+                match item.content {
                     BerObjectContent::Unknown(_, bytes) => {
                         san.push(String::from_utf8_lossy(bytes).to_string());
                     }
                     _ => println!("Failed to read subject alternative name: {:?}", obj),
-                });
+                }
+            }
         }
     }
     Ok(CertInfo {
