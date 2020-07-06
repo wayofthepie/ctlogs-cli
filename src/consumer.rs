@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::error::Error;
 use tokio::io::{AsyncWrite, AsyncWriteExt};
 use tokio::sync::mpsc;
+use x509_parser::TbsCertificate;
 
 #[derive(Default, Deserialize, Serialize)]
 struct CertInfo {
@@ -37,10 +38,7 @@ impl Consumer {
                     let length = u32::from_be_bytes([0, bytes[12], bytes[13], bytes[14]]);
                     let end = length as usize + start;
                     let (_, cert) = x509_parser::parse_x509_der(&bytes[start..end])?;
-                    let info = CertInfo {
-                        issuer: cert.tbs_certificate.issuer.to_string(),
-                        subject: cert.tbs_certificate.subject.to_string(),
-                    };
+                    let info = extract_cert_info(cert.tbs_certificate);
                     let bytes = serde_json::to_vec(&info)?;
                     gzip.write(&bytes).await?;
                 }
@@ -49,6 +47,14 @@ impl Consumer {
         gzip.shutdown().await?;
         Ok(())
     }
+}
+
+fn extract_cert_info(cert: TbsCertificate) -> CertInfo {
+    let info = CertInfo {
+        issuer: cert.issuer.to_string(),
+        subject: cert.subject.to_string(),
+    };
+    info
 }
 
 #[cfg(test)]
