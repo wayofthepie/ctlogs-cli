@@ -79,18 +79,7 @@ mod test {
     #[tokio::test]
     async fn consume_should_skip_precerts() {
         let leaf_input = include_str!("../resources/leaf_input_with_precert").trim();
-        let (mut logs_tx, logs_rx) = mpsc::channel(10);
-        let mut consumer = Consumer::new(logs_rx);
-        logs_tx
-            .send(Logs {
-                entries: vec![LogEntry {
-                    leaf_input: leaf_input.to_owned(),
-                    extra_data: "".to_owned(),
-                }],
-            })
-            .await
-            .unwrap();
-        drop(logs_tx);
+        let mut consumer = init_consumer_with(leaf_input).await;
         let mut buf: Vec<u8> = Vec::new();
         let result = consumer.consume(Cursor::new(&mut buf)).await;
         assert!(result.is_ok());
@@ -98,7 +87,8 @@ mod test {
 
     #[tokio::test]
     async fn consume_should_extract_subject() {
-        let mut consumer = init_consumer_with_valid_cert().await;
+        let leaf_input = include_str!("../resources/leaf_input_with_cert").trim();
+        let mut consumer = init_consumer_with(leaf_input).await;
         let mut buf: Vec<u8> = Vec::new();
         let result = consumer.consume(Cursor::new(&mut buf)).await;
         let info = serde_json::from_slice::<CertInfo>(&decode(&buf).await.unwrap()).unwrap();
@@ -108,7 +98,8 @@ mod test {
 
     #[tokio::test]
     async fn consume_should_extract_issuer() {
-        let mut consumer = init_consumer_with_valid_cert().await;
+        let leaf_input = include_str!("../resources/leaf_input_with_cert").trim();
+        let mut consumer = init_consumer_with(leaf_input).await;
         let mut buf: Vec<u8> = Vec::new();
         let result = consumer.consume(Cursor::new(&mut buf)).await;
         let info = serde_json::from_slice::<CertInfo>(&decode(&buf).await.unwrap()).unwrap();
@@ -119,18 +110,7 @@ mod test {
     #[tokio::test]
     async fn consume_should_error_if_cert_fails_to_parse() {
         let leaf_input = include_str!("../resources/leaf_input_with_invalid_cert").trim();
-        let (mut logs_tx, logs_rx) = mpsc::channel(10);
-        let mut consumer = Consumer::new(logs_rx);
-        logs_tx
-            .send(Logs {
-                entries: vec![LogEntry {
-                    leaf_input: leaf_input.to_owned(),
-                    extra_data: "".to_owned(),
-                }],
-            })
-            .await
-            .unwrap();
-        drop(logs_tx);
+        let mut consumer = init_consumer_with(leaf_input).await;
         let mut buf: Vec<u8> = Vec::new();
         let result = consumer.consume(Cursor::new(&mut buf)).await;
         assert!(result.is_err());
@@ -139,18 +119,7 @@ mod test {
     #[tokio::test]
     async fn consume_should_error_if_base64_decode_fails() {
         let leaf_input = "#";
-        let (mut logs_tx, logs_rx) = mpsc::channel(10);
-        let mut consumer = Consumer::new(logs_rx);
-        logs_tx
-            .send(Logs {
-                entries: vec![LogEntry {
-                    leaf_input: leaf_input.to_owned(),
-                    extra_data: "".to_owned(),
-                }],
-            })
-            .await
-            .unwrap();
-        drop(logs_tx);
+        let mut consumer = init_consumer_with(leaf_input).await;
         let mut buf: Vec<u8> = Vec::new();
         let result = consumer.consume(Cursor::new(&mut buf)).await;
         assert!(result.is_err());
@@ -158,7 +127,8 @@ mod test {
 
     #[tokio::test]
     async fn consume_should_write_logs_compressed() {
-        let mut consumer = init_consumer_with_valid_cert().await;
+        let leaf_input = include_str!("../resources/leaf_input_with_cert").trim();
+        let mut consumer = init_consumer_with(leaf_input).await;
         let mut buf: Vec<u8> = Vec::new();
         consumer.consume(Cursor::new(&mut buf)).await.unwrap();
         let result = decode(&buf).await;
@@ -173,14 +143,13 @@ mod test {
         Ok(buf)
     }
 
-    async fn init_consumer_with_valid_cert() -> Consumer {
-        let leaf_input = include_str!("../resources/leaf_input_with_cert").trim();
+    async fn init_consumer_with(cert: &str) -> Consumer {
         let (mut logs_tx, logs_rx) = mpsc::channel(10);
         let consumer = Consumer::new(logs_rx);
         logs_tx
             .send(Logs {
                 entries: vec![LogEntry {
-                    leaf_input: leaf_input.to_owned(),
+                    leaf_input: cert.to_owned(),
                     extra_data: "".to_owned(),
                 }],
             })
