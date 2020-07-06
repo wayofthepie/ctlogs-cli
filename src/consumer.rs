@@ -45,7 +45,7 @@ impl Consumer {
                     let (_, cert) = x509_parser::parse_x509_der(&bytes[start..end])?;
                     let info = extract_cert_info(cert.tbs_certificate)?;
                     let bytes = serde_json::to_vec(&info)?;
-                    gzip.write(&bytes).await?;
+                    gzip.write_all(&bytes).await?;
                 }
             }
         }

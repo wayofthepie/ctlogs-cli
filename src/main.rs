@@ -6,27 +6,32 @@ use consumer::Consumer;
 use futures::{stream::FuturesUnordered, StreamExt};
 use std::{error::Error, sync::Arc};
 use tokio::signal::unix::{signal, SignalKind};
-use tokio::{join, sync::mpsc, sync::oneshot};
+use tokio::{fs::OpenOptions, join, sync::mpsc, sync::oneshot};
 
 const RETRIEVAL_LIMIT: usize = 32;
 const CT_LOGS_URL: &str = "https://ct.googleapis.com/aviator/ct/v1";
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    //let (sigint_tx, sigint_rx) = oneshot::channel();
-    //let client = Box::new(HttpCtClient::new(CT_LOGS_URL));
-    //let (tx, rx) = mpsc::channel(2000);
-    //let (producer_result, consumer_result, sigint_result) = join!(
-    //       Producer::new(client, tx, sigint_rx).produce(),
-    //       Consumer::new(rx).consume("."),
-    //       signal_handler(sigint_tx)
-    //   );
-    //match (producer_result, consumer_result, sigint_result) {
-    //    (Ok(_), Ok(_), Ok(_)) => Ok(()),
-    //    (Err(e), _, _) => Ok(println!("{:#?}", e)),
-    //    _ => Err("Error occurred!".into()),
-    //}
-    Ok(())
+    let writer = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .write(true)
+        .open("logs.gz")
+        .await?;
+    let (sigint_tx, sigint_rx) = oneshot::channel();
+    let client = Box::new(HttpCtClient::new(CT_LOGS_URL));
+    let (tx, rx) = mpsc::channel(2000);
+    let mut consumer = Consumer::new(rx);
+    let (producer_result, consumer_result, sigint_result) = join!(
+        Producer::new(client, tx, sigint_rx).produce(),
+        consumer.consume(writer),
+        signal_handler(sigint_tx)
+    );
+    match (producer_result, consumer_result, sigint_result) {
+        (Ok(_), Ok(_), Ok(_)) => Ok(()),
+        errs => Err(format!("Error occurred: {:#?}", errs).into()),
+    }
 }
 
 struct Producer {
@@ -56,7 +61,7 @@ impl Producer {
         let mut queue = FuturesUnordered::new();
         let mut interrupted = false;
         while div != 0 {
-            if let Ok(_) = self.sigint_rx.try_recv() {
+            if self.sigint_rx.try_recv().is_ok() {
                 interrupted = true;
                 break;
             }
@@ -88,7 +93,7 @@ impl Producer {
 async fn signal_handler(signal_tx: oneshot::Sender<()>) -> Result<(), Box<dyn Error>> {
     let mut sigint = signal(SignalKind::interrupt())?;
     sigint.recv().await;
-    if let Err(_) = signal_tx.send(()) {
+    if signal_tx.send(()).is_err() {
         println!("An error occurred propagating signal to tasks!");
     }
     println!("Attempting to gracefully let tasks complete.");
