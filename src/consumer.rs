@@ -70,19 +70,7 @@ mod test {
 
     #[tokio::test]
     async fn consume_should_extract_issuer() {
-        let leaf_input = include_str!("../resources/leaf_input_with_cert").trim();
-        let (mut logs_tx, logs_rx) = mpsc::channel(10);
-        let mut consumer = Consumer::new(logs_rx);
-        logs_tx
-            .send(Logs {
-                entries: vec![LogEntry {
-                    leaf_input: leaf_input.to_owned(),
-                    extra_data: "".to_owned(),
-                }],
-            })
-            .await
-            .unwrap();
-        drop(logs_tx);
+        let mut consumer = init_consumer_with_valid_cert().await;
         let mut buf: Vec<u8> = Vec::new();
         let result = consumer.consume(Cursor::new(&mut buf)).await;
         let info = serde_json::from_slice::<CertInfo>(&decode(&buf).await.unwrap()).unwrap();
@@ -132,19 +120,7 @@ mod test {
 
     #[tokio::test]
     async fn consume_should_write_logs_compressed() {
-        let leaf_input = include_str!("../resources/leaf_input_with_cert").trim();
-        let (mut logs_tx, logs_rx) = mpsc::channel(10);
-        let mut consumer = Consumer::new(logs_rx);
-        logs_tx
-            .send(Logs {
-                entries: vec![LogEntry {
-                    leaf_input: leaf_input.to_owned(),
-                    extra_data: "".to_owned(),
-                }],
-            })
-            .await
-            .unwrap();
-        drop(logs_tx);
+        let mut consumer = init_consumer_with_valid_cert().await;
         let mut buf: Vec<u8> = Vec::new();
         consumer.consume(Cursor::new(&mut buf)).await.unwrap();
         let result = decode(&buf).await;
@@ -157,5 +133,22 @@ mod test {
         let mut buf = Vec::new();
         decoder.read_to_end(&mut buf).await?;
         Ok(buf)
+    }
+
+    async fn init_consumer_with_valid_cert() -> Consumer {
+        let leaf_input = include_str!("../resources/leaf_input_with_cert").trim();
+        let (mut logs_tx, logs_rx) = mpsc::channel(10);
+        let consumer = Consumer::new(logs_rx);
+        logs_tx
+            .send(Logs {
+                entries: vec![LogEntry {
+                    leaf_input: leaf_input.to_owned(),
+                    extra_data: "".to_owned(),
+                }],
+            })
+            .await
+            .unwrap();
+        drop(logs_tx);
+        consumer
     }
 }
