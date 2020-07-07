@@ -9,12 +9,12 @@ const RETRIEVAL_LIMIT: usize = 32;
 #[derive(Debug, Deserialize, Serialize, Eq, PartialEq)]
 pub struct LogsChunk {
     pub logs: Logs,
-    pub start: usize,
+    pub position: usize,
 }
 
 impl LogsChunk {
-    pub fn new(logs: Logs, start: usize) -> Self {
-        Self { logs, start }
+    pub fn new(logs: Logs, position: usize) -> Self {
+        Self { logs, position }
     }
 }
 
@@ -127,7 +127,7 @@ mod test {
     }
 
     #[tokio::test]
-    async fn producer_should_return_all_logs() {
+    async fn producer_should_return_all_logs_with_position() {
         let tree_size = 2341;
         let client = Box::new(FakeCtClient { tree_size });
         let (logs_tx, mut logs_rx) = mpsc::channel(100);
@@ -137,9 +137,12 @@ mod test {
             .await
             .unwrap();
         let mut count = 0;
-        let mut start = 0;
+        let mut position = 0;
         while let Some(chunk) = logs_rx.recv().await {
-            count += chunk.logs.entries.len();
+            let len = chunk.logs.entries.len();
+            count += len;
+            assert_eq!(chunk.position, position);
+            position += len;
         }
         assert_eq!(count, tree_size)
     }

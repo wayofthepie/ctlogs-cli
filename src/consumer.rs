@@ -32,11 +32,7 @@ impl Consumer {
         writer: impl AsyncWrite + Unpin + Send,
     ) -> Result<(), Box<dyn Error>> {
         let mut gzip = GzipEncoder::new(writer);
-        while let Some(LogsChunk {
-            logs,
-            start: mut position,
-        }) = self.chunk_rx.recv().await
-        {
+        while let Some(LogsChunk { logs, mut position }) = self.chunk_rx.recv().await {
             for entry in logs.entries {
                 let bytes = base64::decode(entry.leaf_input)?;
                 let entry_type = bytes[10] + bytes[11];
@@ -120,7 +116,7 @@ mod test {
                         },
                     ],
                 },
-                start: position,
+                position,
             })
             .await
             .unwrap();
@@ -226,7 +222,7 @@ mod test {
                         extra_data: "".to_owned(),
                     }],
                 },
-                start: 0,
+                position: 0,
             })
             .await
             .unwrap();
