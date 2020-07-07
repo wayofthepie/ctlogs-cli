@@ -48,9 +48,9 @@ dependencies = [
 
 [[package]]
 name = "async-dup"
-version = "1.2.0"
+version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a3d3732b72c84d8ed5808e59cda61b389a9358f5b54dd567016cba7f12e997ee"
+checksum = "c23bdd6ada8f5f586141f56fd8ea7f60700be462154325cfbbb674126688a51a"
 dependencies = [
  "futures-io",
  "simple-mutex",
