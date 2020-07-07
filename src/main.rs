@@ -1,6 +1,6 @@
 pub mod client;
 mod consumer;
-mod producer;
+pub mod producer;
 
 use client::HttpCtClient;
 use consumer::Consumer;

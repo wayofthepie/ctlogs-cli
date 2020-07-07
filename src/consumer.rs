@@ -1,4 +1,4 @@
-use crate::client::Logs;
+use crate::producer::LogsChunk;
 use async_compression::tokio_02::write::GzipEncoder;
 use der_parser::ber::BerObjectContent;
 use serde::{Deserialize, Serialize};
@@ -10,20 +10,21 @@ use x509_parser::{
     TbsCertificate,
 };
 
-#[derive(Default, Deserialize, Serialize)]
+#[derive(Default, Debug, Deserialize, Serialize)]
 struct CertInfo {
+    pub position: usize,
     pub issuer: String,
     pub subject: String,
     pub san: Vec<String>,
 }
 
 pub struct Consumer {
-    logs_rx: mpsc::Receiver<Logs>,
+    chunk_rx: mpsc::Receiver<LogsChunk>,
 }
 
 impl Consumer {
-    pub fn new(logs_rx: mpsc::Receiver<Logs>) -> Self {
-        Self { logs_rx }
+    pub fn new(chunk_rx: mpsc::Receiver<LogsChunk>) -> Self {
+        Self { chunk_rx }
     }
 
     pub async fn consume(
@@ -31,7 +32,11 @@ impl Consumer {
         writer: impl AsyncWrite + Unpin + Send,
     ) -> Result<(), Box<dyn Error>> {
         let mut gzip = GzipEncoder::new(writer);
-        while let Some(logs) = self.logs_rx.recv().await {
+        while let Some(LogsChunk {
+            logs,
+            start: mut position,
+        }) = self.chunk_rx.recv().await
+        {
             for entry in logs.entries {
                 let bytes = base64::decode(entry.leaf_input)?;
                 let entry_type = bytes[10] + bytes[11];
@@ -43,9 +48,10 @@ impl Consumer {
                     let length = u32::from_be_bytes([0, bytes[12], bytes[13], bytes[14]]);
                     let end = length as usize + start;
                     let (_, cert) = x509_parser::parse_x509_der(&bytes[start..end])?;
-                    let info = extract_cert_info(cert.tbs_certificate)?;
+                    let info = extract_cert_info(cert.tbs_certificate, position)?;
                     let bytes = serde_json::to_vec(&info)?;
                     gzip.write_all(&bytes).await?;
+                    position += 1;
                 }
             }
         }
@@ -54,7 +60,7 @@ impl Consumer {
     }
 }
 
-fn extract_cert_info(cert: TbsCertificate) -> Result<CertInfo, Box<dyn Error>> {
+fn extract_cert_info(cert: TbsCertificate, position: usize) -> Result<CertInfo, Box<dyn Error>> {
     let issuer = cert.issuer;
     let subject = cert.subject;
     let mut san = Vec::new();
@@ -72,6 +78,7 @@ fn extract_cert_info(cert: TbsCertificate) -> Result<CertInfo, Box<dyn Error>> {
         }
     }
     Ok(CertInfo {
+        position,
         issuer: issuer.to_string(),
         subject: subject.to_string(),
         san,
@@ -81,7 +88,10 @@ fn extract_cert_info(cert: TbsCertificate) -> Result<CertInfo, Box<dyn Error>> {
 #[cfg(test)]
 mod test {
     use super::{CertInfo, Consumer};
-    use crate::client::{LogEntry, Logs};
+    use crate::{
+        client::{LogEntry, Logs},
+        producer::LogsChunk,
+    };
     use async_compression::tokio_02::bufread::GzipDecoder;
     use std::{error::Error, io::Cursor};
     use tokio;
@@ -89,6 +99,42 @@ mod test {
         io::{AsyncReadExt, BufReader},
         sync::mpsc,
     };
+
+    #[tokio::test]
+    async fn consume_should_store_position_of_each_log_entry() {
+        let mut position = 7777;
+        let leaf_input = include_str!("../resources/leaf_input_with_cert").trim();
+        let (mut logs_tx, logs_rx) = mpsc::channel(10);
+        let mut consumer = Consumer::new(logs_rx);
+        logs_tx
+            .send(LogsChunk {
+                logs: Logs {
+                    entries: vec![
+                        LogEntry {
+                            leaf_input: leaf_input.to_owned(),
+                            extra_data: "".to_owned(),
+                        },
+                        LogEntry {
+                            leaf_input: leaf_input.to_owned(),
+                            extra_data: "".to_owned(),
+                        },
+                    ],
+                },
+                start: position,
+            })
+            .await
+            .unwrap();
+        drop(logs_tx);
+        let mut buf: Vec<u8> = Vec::new();
+        let result = consumer.consume(Cursor::new(&mut buf)).await;
+        let bytes = decode(&buf).await.unwrap();
+        let deserialize = serde_json::Deserializer::from_slice(&bytes);
+        assert!(result.is_ok());
+        for info in deserialize.into_iter::<CertInfo>() {
+            assert_eq!(info.unwrap().position, position);
+            position += 1;
+        }
+    }
 
     #[tokio::test]
     async fn consume_should_extract_subject_alternative_names() {
@@ -173,11 +219,14 @@ mod test {
         let (mut logs_tx, logs_rx) = mpsc::channel(10);
         let consumer = Consumer::new(logs_rx);
         logs_tx
-            .send(Logs {
-                entries: vec![LogEntry {
-                    leaf_input: cert.to_owned(),
-                    extra_data: "".to_owned(),
-                }],
+            .send(LogsChunk {
+                logs: Logs {
+                    entries: vec![LogEntry {
+                        leaf_input: cert.to_owned(),
+                        extra_data: "".to_owned(),
+                    }],
+                },
+                start: 0,
             })
             .await
             .unwrap();
