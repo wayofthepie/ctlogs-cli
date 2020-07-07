@@ -1,20 +1,33 @@
 use crate::client::{CtClient, Logs};
 use futures::{stream::FuturesUnordered, StreamExt};
+use serde::{Deserialize, Serialize};
 use std::{error::Error, sync::Arc};
 use tokio::{sync::mpsc, sync::oneshot};
 
 const RETRIEVAL_LIMIT: usize = 32;
 
+#[derive(Debug, Deserialize, Serialize, Eq, PartialEq)]
+pub struct LogsChunk {
+    pub logs: Logs,
+    pub start: usize,
+}
+
+impl LogsChunk {
+    pub fn new(logs: Logs, start: usize) -> Self {
+        Self { logs, start }
+    }
+}
+
 pub struct Producer {
     client: Arc<Box<dyn CtClient>>,
-    logs_tx: mpsc::Sender<Logs>,
+    logs_tx: mpsc::Sender<LogsChunk>,
     sigint_rx: oneshot::Receiver<()>,
 }
 
 impl Producer {
     pub fn new(
         client: Box<dyn CtClient>,
-        logs_tx: mpsc::Sender<Logs>,
+        logs_tx: mpsc::Sender<LogsChunk>,
         sigint_rx: oneshot::Receiver<()>,
     ) -> Self {
         Self {
@@ -39,23 +52,23 @@ impl Producer {
             let c = self.client.clone();
             queue.push(async move {
                 let logs = c.get_entries(start, end).await?;
-                Ok::<Logs, Box<dyn Error>>(logs)
+                Ok::<LogsChunk, Box<dyn Error>>(LogsChunk::new(logs, start))
             });
             if queue.len() == 12 {
-                while let Some(Ok(logs)) = queue.next().await {
-                    self.logs_tx.send(logs).await?;
+                while let Some(Ok(chunk)) = queue.next().await {
+                    self.logs_tx.send(chunk).await?;
                 }
             }
             start += RETRIEVAL_LIMIT;
             end = start + RETRIEVAL_LIMIT - 1;
             div -= 1;
         }
-        while let Some(Ok(logs)) = queue.next().await {
-            self.logs_tx.send(logs).await?;
+        while let Some(Ok(chunk)) = queue.next().await {
+            self.logs_tx.send(chunk).await?;
         }
         if !interrupted && rem != 0 {
             let logs = self.client.get_entries(start, start + rem - 1).await?;
-            self.logs_tx.send(logs).await?;
+            self.logs_tx.send(LogsChunk::new(logs, start)).await?;
         }
         Ok(())
     }
@@ -124,8 +137,9 @@ mod test {
             .await
             .unwrap();
         let mut count = 0;
-        while let Some(logs) = logs_rx.recv().await {
-            count += logs.entries.len();
+        let mut start = 0;
+        while let Some(chunk) = logs_rx.recv().await {
+            count += chunk.logs.entries.len();
         }
         assert_eq!(count, tree_size)
     }
