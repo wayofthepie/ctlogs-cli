@@ -79,51 +79,41 @@ fn extract_cert_info(cert: TbsCertificate, position: usize) -> Result<CertInfo, 
     cert_info.position = position;
     cert_info.issuer = cert.issuer.to_string();
     cert_info.subject = cert.subject.to_string();
-    let mut san = Vec::new();
     for extension in cert.extensions {
-        if let Ok(Nid::SubjectAltName) = oid2nid(&extension.oid) {
-            parse_san(extension.value, &mut san, position)?;
+        match oid2nid(&extension.oid) {
+            Ok(Nid::SubjectAltName) => {
+                cert_info.san = parse_san(extension.value, position)?;
+            }
+            _ => (),
         }
     }
-    cert_info.san = san;
     Ok(cert_info)
 }
 
-fn parse_san(
-    bytes: &[u8],
-    san: &mut Vec<SanObject>,
-    position: usize,
-) -> Result<(), Box<dyn Error>> {
+fn parse_san(bytes: &[u8], position: usize) -> Result<Vec<SanObject>, Box<dyn Error>> {
     let (_, obj) = der_parser::parse_der(bytes)?;
-    for item in obj.as_sequence()? {
-        match item.content {
+    let san_objects = obj
+        .as_sequence()?
+        .iter()
+        .map(|item| match item.content {
             BerObjectContent::Unknown(tag, bytes) => match tag.0 {
-                // othername
-                // TODO handle othername san objects
-                0 => eprintln!("Found othername san, ignoring"),
                 // rfc822name
                 // TODO emails can have non-utf8 characters,
                 // they should be accounted for here too
-                1 => san.push(SanObject::Rfc822Name(
-                    String::from_utf8_lossy(bytes).to_string(),
-                )),
+                1 => SanObject::Rfc822Name(String::from_utf8_lossy(bytes).to_string()),
                 // dns name
-                2 => san.push(SanObject::DnsName(
-                    String::from_utf8_lossy(bytes).to_string(),
-                )),
+                2 => SanObject::DnsName(String::from_utf8_lossy(bytes).to_string()),
                 // ip address
-                7 => san.push(bytes_to_san_ip(&bytes)),
+                7 => bytes_to_san_ip(&bytes),
                 _ => {
-                    println!("{} {}", position, tag.0);
-                    san.push(SanObject::Unknown(
-                        String::from_utf8_lossy(bytes).to_string(),
-                    ));
+                    eprintln!("{} {}", position, tag.0);
+                    SanObject::Unknown(String::from_utf8_lossy(bytes).to_string())
                 }
             },
-            _ => println!("Failed to read subject alternative name: {:?}", obj),
-        }
-    }
-    Ok(())
+            _ => SanObject::Unknown(String::from_utf8_lossy(bytes).to_string()),
+        })
+        .collect();
+    Ok(san_objects)
 }
 
 fn bytes_to_san_ip(bytes: &[u8]) -> SanObject {
