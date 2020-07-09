@@ -34,7 +34,7 @@ impl Consumer {
         let mut gzip = GzipEncoder::new(writer);
         while let Some(LogsChunk { logs, mut position }) = self.chunk_rx.recv().await {
             for entry in logs.entries {
-                let bytes = base64::decode(entry.leaf_input)?;
+                let bytes = base64::decode(&entry.leaf_input)?;
                 let entry_type = bytes[10] + bytes[11];
                 if entry_type != 0 {
                     // Found precert, ignore.
@@ -43,10 +43,14 @@ impl Consumer {
                     let start = 15;
                     let length = u32::from_be_bytes([0, bytes[12], bytes[13], bytes[14]]);
                     let end = length as usize + start;
-                    let (_, cert) = x509_parser::parse_x509_der(&bytes[start..end])?;
-                    let info = extract_cert_info(cert.tbs_certificate, position)?;
-                    let bytes = serde_json::to_vec(&info)?;
-                    gzip.write_all(&bytes).await?;
+                    match x509_parser::parse_x509_der(&bytes[start..end]) {
+                        Ok((_, cert)) => {
+                            let info = extract_cert_info(cert.tbs_certificate, position)?;
+                            let bytes = serde_json::to_vec(&info)?;
+                            gzip.write_all(&bytes).await?;
+                        }
+                        Err(err) => println!("Error at position {}: {}", position, err),
+                    }
                     position += 1;
                 }
             }
@@ -95,6 +99,41 @@ mod test {
         io::{AsyncReadExt, BufReader},
         sync::mpsc,
     };
+
+    #[tokio::test]
+    async fn consume_should_skip_cert_if_it_fails_to_parse() {
+        let start_position = 7777;
+        let expected_position = start_position + 1;
+        let leaf_input = include_str!("../resources/leaf_input_with_cert").trim();
+        let leaf_input_with_invalid_cert =
+            include_str!("../resources/leaf_input_with_invalid_cert").trim();
+        let (mut logs_tx, logs_rx) = mpsc::channel(10);
+        let mut consumer = Consumer::new(logs_rx);
+        logs_tx
+            .send(LogsChunk {
+                logs: Logs {
+                    entries: vec![
+                        LogEntry {
+                            leaf_input: leaf_input_with_invalid_cert.to_owned(),
+                            extra_data: "".to_owned(),
+                        },
+                        LogEntry {
+                            leaf_input: leaf_input.to_owned(),
+                            extra_data: "".to_owned(),
+                        },
+                    ],
+                },
+                position: start_position,
+            })
+            .await
+            .unwrap();
+        drop(logs_tx);
+        let mut buf: Vec<u8> = Vec::new();
+        let result = consumer.consume(Cursor::new(&mut buf)).await;
+        assert!(result.is_ok());
+        let info = serde_json::from_slice::<CertInfo>(&decode(&buf).await.unwrap()).unwrap();
+        assert_eq!(info.position, expected_position);
+    }
 
     #[tokio::test]
     async fn consume_should_store_position_of_each_log_entry() {
@@ -173,15 +212,6 @@ mod test {
         let info = serde_json::from_slice::<CertInfo>(&decode(&buf).await.unwrap()).unwrap();
         assert!(result.is_ok());
         assert_eq!(info.issuer, "C=US, O=GeoTrust Inc., CN=RapidSSL SHA256 CA");
-    }
-
-    #[tokio::test]
-    async fn consume_should_error_if_cert_fails_to_parse() {
-        let leaf_input = include_str!("../resources/leaf_input_with_invalid_cert").trim();
-        let mut consumer = init_consumer_with(leaf_input).await;
-        let mut buf: Vec<u8> = Vec::new();
-        let result = consumer.consume(Cursor::new(&mut buf)).await;
-        assert!(result.is_err());
     }
 
     #[tokio::test]
