@@ -82,11 +82,8 @@ fn extract_cert_info(cert: TbsCertificate, position: usize) -> Result<CertInfo, 
     cert_info.issuer = cert.issuer.to_string();
     cert_info.subject = cert.subject.to_string();
     for extension in cert.extensions {
-        match oid2nid(&extension.oid) {
-            Ok(Nid::SubjectAltName) => {
-                cert_info.san = parse_san(extension.value, position)?;
-            }
-            _ => (),
+        if let Ok(Nid::SubjectAltName) = oid2nid(&extension.oid) {
+            cert_info.san = parse_san(extension.value, position)?;
         }
     }
     Ok(cert_info)
