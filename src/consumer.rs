@@ -1,9 +1,9 @@
 use crate::producer::LogsChunk;
-use der_parser::ber::{BerObjectContent, BerTag};
+use der_parser::ber::BerObjectContent;
 use serde::{Deserialize, Serialize};
 use std::{
     error::Error,
-    net::{IpAddr, Ipv4Addr},
+    net::{Ipv4Addr, Ipv6Addr},
 };
 use tokio::io::{AsyncWrite, AsyncWriteExt};
 use tokio::sync::mpsc;
@@ -23,8 +23,9 @@ struct CertInfo {
 
 #[derive(Debug, Deserialize, Serialize, PartialEq)]
 enum SanObject {
-    Ipv4Addr(String),
     DnsName(String),
+    Ipv4Addr(String),
+    Ipv6Addr(String),
 }
 
 pub struct Consumer {
@@ -99,9 +100,7 @@ fn parse_san(
                     String::from_utf8_lossy(bytes).to_string(),
                 )),
                 // ip address
-                7 => san.push(SanObject::Ipv4Addr(
-                    Ipv4Addr::new(bytes[0], bytes[1], bytes[2], bytes[3]).to_string(),
-                )),
+                7 => san.push(bytes_to_san_ip(&bytes)),
                 other => eprintln!(
                     "Unknown san type {} encountered at position {}",
                     other, position
@@ -111,6 +110,26 @@ fn parse_san(
         }
     }
     Ok(())
+}
+
+fn bytes_to_san_ip(bytes: &[u8]) -> SanObject {
+    if bytes.len() == 4 {
+        SanObject::Ipv4Addr(Ipv4Addr::new(bytes[0], bytes[1], bytes[2], bytes[3]).to_string())
+    } else {
+        SanObject::Ipv6Addr(
+            Ipv6Addr::new(
+                u16::from_be_bytes([bytes[0], bytes[1]]),
+                u16::from_be_bytes([bytes[2], bytes[3]]),
+                u16::from_be_bytes([bytes[4], bytes[5]]),
+                u16::from_be_bytes([bytes[6], bytes[7]]),
+                u16::from_be_bytes([bytes[8], bytes[9]]),
+                u16::from_be_bytes([bytes[10], bytes[11]]),
+                u16::from_be_bytes([bytes[12], bytes[13]]),
+                u16::from_be_bytes([bytes[14], bytes[15]]),
+            )
+            .to_string(),
+        )
+    }
 }
 
 #[cfg(test)]
@@ -125,7 +144,21 @@ mod test {
     use tokio::sync::mpsc;
 
     #[tokio::test]
-    async fn consume_should_correctly_decode_san_with_ip_and_dns() {
+    async fn consume_should_correctly_decode_san_with_ipv6() {
+        let leaf_input = include_str!("../resources/leaf_input_with_cert_ipv6_san").trim();
+        let mut consumer = init_consumer_with(leaf_input).await;
+        let mut buf: Vec<u8> = Vec::new();
+        let result = consumer.consume(Cursor::new(&mut buf)).await;
+        assert!(result.is_ok());
+        let info = serde_json::from_slice::<CertInfo>(&buf).unwrap();
+        assert_eq!(
+            info.san,
+            vec![SanObject::Ipv6Addr("fe80::76d0:2bff:fec6:a415".to_owned())]
+        );
+    }
+
+    #[tokio::test]
+    async fn consume_should_correctly_decode_san_with_ipv4_and_dns() {
         let leaf_input = include_str!("../resources/leaf_input_with_cert_ip_and_dns_san").trim();
         let mut consumer = init_consumer_with(leaf_input).await;
         let mut buf: Vec<u8> = Vec::new();
