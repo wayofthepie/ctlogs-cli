@@ -26,6 +26,9 @@ enum SanObject {
     DnsName(String),
     Ipv4Addr(String),
     Ipv6Addr(String),
+    Rfc822Name(String),
+    Othername(String),
+    Unknown(String),
 }
 
 pub struct Consumer {
@@ -95,16 +98,27 @@ fn parse_san(
     for item in obj.as_sequence()? {
         match item.content {
             BerObjectContent::Unknown(tag, bytes) => match tag.0 {
+                // othername
+                // TODO handle othername san objects
+                0 => eprintln!("Found othername san, ignoring"),
+                // rfc822name
+                // TODO emails can have non-utf8 characters,
+                // they should be accounted for here too
+                1 => san.push(SanObject::Rfc822Name(
+                    String::from_utf8_lossy(bytes).to_string(),
+                )),
                 // dns name
                 2 => san.push(SanObject::DnsName(
                     String::from_utf8_lossy(bytes).to_string(),
                 )),
                 // ip address
                 7 => san.push(bytes_to_san_ip(&bytes)),
-                other => eprintln!(
-                    "Unknown san type {} encountered at position {}",
-                    other, position
-                ),
+                _ => {
+                    println!("{} {}", position, tag.0);
+                    san.push(SanObject::Unknown(
+                        String::from_utf8_lossy(bytes).to_string(),
+                    ));
+                }
             },
             _ => println!("Failed to read subject alternative name: {:?}", obj),
         }
@@ -142,6 +156,20 @@ mod test {
     use std::io::Cursor;
     use tokio;
     use tokio::sync::mpsc;
+
+    #[tokio::test]
+    async fn consume_should_decode_san_with_othername_type() {
+        let leaf_input = include_str!("../resources/leaf_input_with_cert__san_rfc822name").trim();
+        let mut consumer = init_consumer_with(leaf_input).await;
+        let mut buf: Vec<u8> = Vec::new();
+        let result = consumer.consume(Cursor::new(&mut buf)).await;
+        assert!(result.is_ok());
+        let info = serde_json::from_slice::<CertInfo>(&buf).unwrap();
+        assert_eq!(
+            info.san,
+            vec![SanObject::Rfc822Name("pmh@hodmezovasarhely.hu".to_owned())]
+        );
+    }
 
     #[tokio::test]
     async fn consume_should_correctly_decode_san_with_ipv6() {
