@@ -48,6 +48,7 @@ impl Consumer {
                             info.cert = base64::encode(&bytes[start..end]);
                             let bytes = serde_json::to_vec(&info)?;
                             writer.write_all(&bytes).await?;
+                            writer.write_all(b"\n").await?;
                         }
                         Err(err) => println!("Error at position {}: {}", position, err),
                     }
