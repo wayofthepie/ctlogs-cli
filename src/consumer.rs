@@ -15,6 +15,7 @@ struct CertInfo {
     pub issuer: String,
     pub subject: String,
     pub san: Vec<String>,
+    pub cert: String,
 }
 
 pub struct Consumer {
@@ -43,7 +44,8 @@ impl Consumer {
                     let end = length as usize + start;
                     match x509_parser::parse_x509_der(&bytes[start..end]) {
                         Ok((_, cert)) => {
-                            let info = extract_cert_info(cert.tbs_certificate, position)?;
+                            let mut info = extract_cert_info(cert.tbs_certificate, position)?;
+                            info.cert = base64::encode(&bytes[start..end]);
                             let bytes = serde_json::to_vec(&info)?;
                             writer.write_all(&bytes).await?;
                         }
@@ -59,8 +61,10 @@ impl Consumer {
 }
 
 fn extract_cert_info(cert: TbsCertificate, position: usize) -> Result<CertInfo, Box<dyn Error>> {
-    let issuer = cert.issuer;
-    let subject = cert.subject;
+    let mut cert_info = CertInfo::default();
+    cert_info.position = position;
+    cert_info.issuer = cert.issuer.to_string();
+    cert_info.subject = cert.subject.to_string();
     let mut san = Vec::new();
     for extension in cert.extensions {
         if let Ok(Nid::SubjectAltName) = oid2nid(&extension.oid) {
@@ -75,12 +79,8 @@ fn extract_cert_info(cert: TbsCertificate, position: usize) -> Result<CertInfo, 
             }
         }
     }
-    Ok(CertInfo {
-        position,
-        issuer: issuer.to_string(),
-        subject: subject.to_string(),
-        san,
-    })
+    cert_info.san = san;
+    Ok(cert_info)
 }
 
 #[cfg(test)]
@@ -90,12 +90,26 @@ mod test {
         client::{LogEntry, Logs},
         producer::LogsChunk,
     };
-    use std::{error::Error, io::Cursor};
+    use std::io::Cursor;
     use tokio;
-    use tokio::{
-        io::{AsyncReadExt, BufReader},
-        sync::mpsc,
-    };
+    use tokio::sync::mpsc;
+
+    #[tokio::test]
+    async fn consume_should_store_full_cert() {
+        let leaf_input = include_str!("../resources/leaf_input_with_cert").trim();
+        let mut consumer = init_consumer_with(leaf_input).await;
+        let mut buf: Vec<u8> = Vec::new();
+        let result = consumer.consume(Cursor::new(&mut buf)).await;
+        assert!(result.is_ok());
+        let info = serde_json::from_slice::<CertInfo>(&buf).unwrap();
+        let leaf_bytes = base64::decode(leaf_input.as_bytes()).unwrap();
+        let start = 15;
+        let length = u32::from_be_bytes([0, leaf_bytes[12], leaf_bytes[13], leaf_bytes[14]]);
+        let end = start + length as usize;
+        let cert_bytes = &leaf_bytes[start..end];
+        let cert = base64::encode(cert_bytes);
+        assert_eq!(info.cert, cert);
+    }
 
     #[tokio::test]
     async fn consume_should_skip_cert_if_it_fails_to_parse() {
