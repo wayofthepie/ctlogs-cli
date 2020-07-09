@@ -22,7 +22,9 @@ struct CertInfo {
 }
 
 #[derive(Debug, Deserialize, Serialize, PartialEq)]
-enum SanObject {
+#[non_exhaustive]
+#[serde(rename_all = "snake_case")]
+pub enum SanObject {
     DnsName(String),
     Ipv4Addr(String),
     Ipv6Addr(String),
@@ -146,6 +148,23 @@ mod test {
     use std::io::Cursor;
     use tokio;
     use tokio::sync::mpsc;
+
+    #[tokio::test]
+    async fn should_serialize_san_object_fields_with_snake_case() {
+        let san_objects = vec![
+            SanObject::DnsName("".to_owned()),
+            SanObject::Rfc822Name("".to_owned()),
+            SanObject::Ipv4Addr("".to_owned()),
+            SanObject::Ipv6Addr("".to_owned()),
+            SanObject::Othername("".to_owned()),
+            SanObject::Unknown("".to_owned()),
+        ];
+        let san_objects_str = serde_json::to_string(&san_objects).unwrap();
+        assert_eq!(
+            san_objects_str,
+            r#"[{"dns_name":""},{"rfc822_name":""},{"ipv4_addr":""},{"ipv6_addr":""},{"othername":""},{"unknown":""}]"#
+        );
+    }
 
     #[tokio::test]
     async fn consume_should_decode_san_with_othername_type() {
