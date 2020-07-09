@@ -17,7 +17,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .create(true)
         .append(true)
         .write(true)
-        .open("logs.gz")
+        .open("logs")
         .await?;
     let (sigint_tx, sigint_rx) = oneshot::channel();
     let client = Box::new(HttpCtClient::new(CT_LOGS_URL));

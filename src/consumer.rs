@@ -1,5 +1,4 @@
 use crate::producer::LogsChunk;
-use async_compression::tokio_02::write::GzipEncoder;
 use der_parser::ber::BerObjectContent;
 use serde::{Deserialize, Serialize};
 use std::error::Error;
@@ -29,9 +28,8 @@ impl Consumer {
 
     pub async fn consume(
         &mut self,
-        writer: impl AsyncWrite + Unpin + Send,
+        mut writer: impl AsyncWrite + Unpin + Send,
     ) -> Result<(), Box<dyn Error>> {
-        let mut gzip = GzipEncoder::new(writer);
         while let Some(LogsChunk { logs, mut position }) = self.chunk_rx.recv().await {
             for entry in logs.entries {
                 let bytes = base64::decode(&entry.leaf_input)?;
@@ -47,7 +45,7 @@ impl Consumer {
                         Ok((_, cert)) => {
                             let info = extract_cert_info(cert.tbs_certificate, position)?;
                             let bytes = serde_json::to_vec(&info)?;
-                            gzip.write_all(&bytes).await?;
+                            writer.write_all(&bytes).await?;
                         }
                         Err(err) => println!("Error at position {}: {}", position, err),
                     }
@@ -55,7 +53,7 @@ impl Consumer {
                 }
             }
         }
-        gzip.shutdown().await?;
+        writer.shutdown().await?;
         Ok(())
     }
 }
@@ -92,7 +90,6 @@ mod test {
         client::{LogEntry, Logs},
         producer::LogsChunk,
     };
-    use async_compression::tokio_02::bufread::GzipDecoder;
     use std::{error::Error, io::Cursor};
     use tokio;
     use tokio::{
@@ -131,7 +128,7 @@ mod test {
         let mut buf: Vec<u8> = Vec::new();
         let result = consumer.consume(Cursor::new(&mut buf)).await;
         assert!(result.is_ok());
-        let info = serde_json::from_slice::<CertInfo>(&decode(&buf).await.unwrap()).unwrap();
+        let info = serde_json::from_slice::<CertInfo>(&buf).unwrap();
         assert_eq!(info.position, expected_position);
     }
 
@@ -162,8 +159,7 @@ mod test {
         drop(logs_tx);
         let mut buf: Vec<u8> = Vec::new();
         let result = consumer.consume(Cursor::new(&mut buf)).await;
-        let bytes = decode(&buf).await.unwrap();
-        let deserialize = serde_json::Deserializer::from_slice(&bytes);
+        let deserialize = serde_json::Deserializer::from_slice(&buf);
         assert!(result.is_ok());
         for info in deserialize.into_iter::<CertInfo>() {
             assert_eq!(info.unwrap().position, position);
@@ -177,7 +173,7 @@ mod test {
         let mut consumer = init_consumer_with(leaf_input).await;
         let mut buf: Vec<u8> = Vec::new();
         let result = consumer.consume(Cursor::new(&mut buf)).await;
-        let info = serde_json::from_slice::<CertInfo>(&decode(&buf).await.unwrap()).unwrap();
+        let info = serde_json::from_slice::<CertInfo>(&buf).unwrap();
         assert!(result.is_ok());
         assert_eq!(info.san, vec!["www.libraryav.com.au", "libraryav.com.au"]);
     }
@@ -189,7 +185,7 @@ mod test {
         let mut buf: Vec<u8> = Vec::new();
         let result = consumer.consume(Cursor::new(&mut buf)).await;
         assert!(result.is_ok());
-        assert!(decode(&buf).await.unwrap().is_empty());
+        assert!(buf.is_empty());
     }
 
     #[tokio::test]
@@ -198,7 +194,7 @@ mod test {
         let mut consumer = init_consumer_with(leaf_input).await;
         let mut buf: Vec<u8> = Vec::new();
         let result = consumer.consume(Cursor::new(&mut buf)).await;
-        let info = serde_json::from_slice::<CertInfo>(&decode(&buf).await.unwrap()).unwrap();
+        let info = serde_json::from_slice::<CertInfo>(&buf).unwrap();
         assert!(result.is_ok());
         assert_eq!(info.subject, "CN=www.libraryav.com.au");
     }
@@ -209,7 +205,7 @@ mod test {
         let mut consumer = init_consumer_with(leaf_input).await;
         let mut buf: Vec<u8> = Vec::new();
         let result = consumer.consume(Cursor::new(&mut buf)).await;
-        let info = serde_json::from_slice::<CertInfo>(&decode(&buf).await.unwrap()).unwrap();
+        let info = serde_json::from_slice::<CertInfo>(&buf).unwrap();
         assert!(result.is_ok());
         assert_eq!(info.issuer, "C=US, O=GeoTrust Inc., CN=RapidSSL SHA256 CA");
     }
@@ -221,24 +217,6 @@ mod test {
         let mut buf: Vec<u8> = Vec::new();
         let result = consumer.consume(Cursor::new(&mut buf)).await;
         assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn consume_should_write_logs_compressed() {
-        let leaf_input = include_str!("../resources/leaf_input_with_cert").trim();
-        let mut consumer = init_consumer_with(leaf_input).await;
-        let mut buf: Vec<u8> = Vec::new();
-        consumer.consume(Cursor::new(&mut buf)).await.unwrap();
-        let result = decode(&buf).await;
-        assert!(result.is_ok());
-        assert!(!result.unwrap().is_empty());
-    }
-
-    async fn decode(gzipped_data: &[u8]) -> Result<Vec<u8>, Box<dyn Error>> {
-        let mut decoder = GzipDecoder::new(BufReader::new(gzipped_data));
-        let mut buf = Vec::new();
-        decoder.read_to_end(&mut buf).await?;
-        Ok(buf)
     }
 
     async fn init_consumer_with(cert: &str) -> Consumer {
