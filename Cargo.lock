@@ -412,7 +412,7 @@ dependencies = [
  "async-trait",
  "base64 0.12.3",
  "csv",
- "der-parser 4.0.1",
+ "der-parser 4.0.2",
  "futures 0.3.5",
  "http",
  "reqwest",
@@ -426,12 +426,12 @@ dependencies = [
 
 [[package]]
 name = "der-oid-macro"
-version = "0.1.0"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "74708de7d12618cef724cea09e925ab1ce7469b1e4b43834172bcb735db64bcd"
+checksum = "e66558629d772c3be040566b7be07be8c8f5aecee95e4a092dfe2efc313277ad"
 dependencies = [
  "nom",
- "num-bigint",
+ "num-bigint 0.3.0",
  "num-traits",
  "proc-macro-hack",
 ]
@@ -443,15 +443,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f51f64dcdf1cdc550d21d73dc959726c7dbeeab4a01481d08084a7736956464e"
 dependencies = [
  "nom",
- "num-bigint",
+ "num-bigint 0.2.6",
  "rusticata-macros",
 ]
 
 [[package]]
 name = "der-parser"
-version = "4.0.1"
+version = "4.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "48a7254a5674422c72b29fec19f58ce67d842bd07908f4565b11464c10342d36"
+checksum = "c97e68dc033b340ff19244dd3caa94c6148383711361d5e3c74f64175760a93c"
 dependencies = [
  "der-oid-macro",
  "nom",
@@ -1135,6 +1135,17 @@ name = "num-bigint"
 version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "090c7f9998ee0ff65aa5b723e4009f7b217707f1fb5ea551329cc4d6231fb304"
+dependencies = [
+ "autocfg",
+ "num-integer",
+ "num-traits",
+]
+
+[[package]]
+name = "num-bigint"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b7f3fc75e3697059fb1bc465e3d8cca6cf92f56854f201158b3f9c77d5a3cfa0"
 dependencies = [
  "autocfg",
  "num-integer",
@@ -2005,7 +2016,7 @@ dependencies = [
  "base64 0.11.0",
  "der-parser 3.0.4",
  "nom",
- "num-bigint",
+ "num-bigint 0.2.6",
  "rusticata-macros",
  "time",
 ]
