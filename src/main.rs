@@ -8,7 +8,7 @@ use consumer::Consumer;
 use producer::Producer;
 use std::error::Error;
 use tokio::signal::unix::{signal, SignalKind};
-use tokio::{fs::OpenOptions, join, sync::mpsc, sync::oneshot};
+use tokio::{fs::OpenOptions, sync::mpsc, sync::oneshot, try_join};
 
 const CT_LOGS_URL: &str = "https://ct.googleapis.com/aviator/ct/v1";
 
@@ -24,13 +24,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let client = Box::new(HttpCtClient::new(CT_LOGS_URL));
     let (tx, rx) = mpsc::channel(2000);
     let mut consumer = Consumer::new(rx);
-    let (producer_result, consumer_result, sigint_result) = join!(
+    let result = try_join!(
         Producer::new(client, tx, sigint_rx).produce(),
         consumer.consume(writer),
         signal_handler(sigint_tx)
     );
-    match (producer_result, consumer_result, sigint_result) {
-        (Ok(_), Ok(_), Ok(_)) => Ok(()),
+    match result {
+        Ok((_, _, _)) => Ok(()),
         errs => Err(format!("Error occurred: {:#?}", errs).into()),
     }
 }
