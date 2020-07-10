@@ -38,9 +38,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
 async fn signal_handler(signal_tx: oneshot::Sender<()>) -> Result<(), Box<dyn Error>> {
     let mut sigint = signal(SignalKind::interrupt())?;
     sigint.recv().await;
-    if signal_tx.send(()).is_err() {
-        eprintln!("An error occurred propagating signal to tasks!");
-    }
+    signal_tx
+        .send(())
+        .map_err(|_| "Failed to propagate sigint to other tasks!")?;
     eprintln!("Attempting to gracefully let tasks complete.");
     Ok(())
 }
