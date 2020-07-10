@@ -1,37 +1,7 @@
-use crate::producer::LogsChunk;
-use der_parser::ber::BerObjectContent;
-use serde::{Deserialize, Serialize};
-use std::{
-    error::Error,
-    net::{Ipv4Addr, Ipv6Addr},
-};
+use crate::{parser, producer::LogsChunk};
+use std::error::Error;
 use tokio::io::{AsyncWrite, AsyncWriteExt};
 use tokio::sync::mpsc;
-use x509_parser::{
-    objects::{oid2nid, Nid},
-    TbsCertificate,
-};
-
-#[derive(Default, Debug, Deserialize, Serialize)]
-struct CertInfo {
-    pub position: usize,
-    pub issuer: String,
-    pub subject: String,
-    pub san: Vec<SanObject>,
-    pub cert: String,
-}
-
-#[derive(Debug, Deserialize, Serialize, PartialEq)]
-#[non_exhaustive]
-#[serde(rename_all = "snake_case")]
-pub enum SanObject {
-    DnsName(String),
-    Ipv4Addr(String),
-    Ipv6Addr(String),
-    Rfc822Name(String),
-    Othername(String),
-    Unknown(String),
-}
 
 pub struct Consumer {
     chunk_rx: mpsc::Receiver<LogsChunk>,
@@ -54,18 +24,15 @@ impl Consumer {
                     eprintln!("Found precert at position {}, ignoring.", position);
                     continue;
                 } else {
-                    let start = 15;
-                    let length = u32::from_be_bytes([0, bytes[12], bytes[13], bytes[14]]);
-                    let end = length as usize + start;
-                    match x509_parser::parse_x509_der(&bytes[start..end]) {
-                        Ok((_, cert)) => {
-                            let mut info = extract_cert_info(cert.tbs_certificate, position)?;
-                            info.cert = base64::encode(&bytes[start..end]);
+                    let cert_end_index = u32::from_be_bytes([0, bytes[12], bytes[13], bytes[14]]);
+                    match parser::parse_x509_bytes(&bytes[15..], cert_end_index as usize, position)
+                    {
+                        Ok(info) => {
                             let bytes = serde_json::to_vec(&info)?;
                             writer.write_all(&bytes).await?;
                             writer.write_all(b"\n").await?;
                         }
-                        Err(err) => println!("Error at position {}: {}", position, err),
+                        Err(err) => eprintln!("Error at position {}: {}", position, err),
                     }
                     position += 1;
                 }
@@ -76,140 +43,17 @@ impl Consumer {
     }
 }
 
-fn extract_cert_info(cert: TbsCertificate, position: usize) -> Result<CertInfo, Box<dyn Error>> {
-    let mut cert_info = CertInfo::default();
-    cert_info.position = position;
-    cert_info.issuer = cert.issuer.to_string();
-    cert_info.subject = cert.subject.to_string();
-    for extension in cert.extensions {
-        if let Ok(Nid::SubjectAltName) = oid2nid(&extension.oid) {
-            cert_info.san = parse_san(extension.value)?;
-        }
-    }
-    Ok(cert_info)
-}
-
-fn parse_san(bytes: &[u8]) -> Result<Vec<SanObject>, Box<dyn Error>> {
-    let (_, obj) = der_parser::parse_der(bytes)?;
-    let san_objects = obj
-        .as_sequence()?
-        .iter()
-        .map(|item| match item.content {
-            BerObjectContent::Unknown(tag, bytes) => match tag.0 {
-                // rfc822name
-                // TODO emails can have non-utf8 characters,
-                // they should be accounted for here too
-                1 => SanObject::Rfc822Name(String::from_utf8_lossy(bytes).to_string()),
-                // dns name
-                2 => SanObject::DnsName(String::from_utf8_lossy(bytes).to_string()),
-                // ip address
-                7 => bytes_to_san_ip(&bytes),
-                _ => SanObject::Unknown(String::from_utf8_lossy(bytes).to_string()),
-            },
-            _ => SanObject::Unknown(String::from_utf8_lossy(bytes).to_string()),
-        })
-        .collect();
-    Ok(san_objects)
-}
-
-fn bytes_to_san_ip(bytes: &[u8]) -> SanObject {
-    let len = bytes.len();
-    if len == 4 {
-        SanObject::Ipv4Addr(Ipv4Addr::new(bytes[0], bytes[1], bytes[2], bytes[3]).to_string())
-    } else if len == 16 {
-        SanObject::Ipv6Addr(
-            Ipv6Addr::new(
-                u16::from_be_bytes([bytes[0], bytes[1]]),
-                u16::from_be_bytes([bytes[2], bytes[3]]),
-                u16::from_be_bytes([bytes[4], bytes[5]]),
-                u16::from_be_bytes([bytes[6], bytes[7]]),
-                u16::from_be_bytes([bytes[8], bytes[9]]),
-                u16::from_be_bytes([bytes[10], bytes[11]]),
-                u16::from_be_bytes([bytes[12], bytes[13]]),
-                u16::from_be_bytes([bytes[14], bytes[15]]),
-            )
-            .to_string(),
-        )
-    } else {
-        // TODO think of a better way of signifying invalid data here
-        SanObject::Ipv4Addr("Invalid".to_owned())
-    }
-}
-
 #[cfg(test)]
 mod test {
-    use super::{CertInfo, Consumer, SanObject};
+    use super::Consumer;
     use crate::{
         client::{LogEntry, Logs},
+        parser::CertInfo,
         producer::LogsChunk,
     };
     use std::io::Cursor;
     use tokio;
     use tokio::sync::mpsc;
-
-    #[tokio::test]
-    async fn should_serialize_san_object_fields_with_snake_case() {
-        let san_objects = vec![
-            SanObject::DnsName("".to_owned()),
-            SanObject::Rfc822Name("".to_owned()),
-            SanObject::Ipv4Addr("".to_owned()),
-            SanObject::Ipv6Addr("".to_owned()),
-            SanObject::Othername("".to_owned()),
-            SanObject::Unknown("".to_owned()),
-        ];
-        let san_objects_str = serde_json::to_string(&san_objects).unwrap();
-        assert_eq!(
-            san_objects_str,
-            r#"[{"dns_name":""},{"rfc822_name":""},{"ipv4_addr":""},{"ipv6_addr":""},{"othername":""},{"unknown":""}]"#
-        );
-    }
-
-    #[tokio::test]
-    async fn consume_should_decode_san_with_othername_type() {
-        let leaf_input =
-            include_str!("../resources/test/leaf_input_with_cert__san_rfc822name").trim();
-        let mut consumer = init_consumer_with(leaf_input).await;
-        let mut buf: Vec<u8> = Vec::new();
-        let result = consumer.consume(Cursor::new(&mut buf)).await;
-        assert!(result.is_ok());
-        let info = serde_json::from_slice::<CertInfo>(&buf).unwrap();
-        assert_eq!(
-            info.san,
-            vec![SanObject::Rfc822Name("pmh@hodmezovasarhely.hu".to_owned())]
-        );
-    }
-
-    #[tokio::test]
-    async fn consume_should_correctly_decode_san_with_ipv6() {
-        let leaf_input = include_str!("../resources/test/leaf_input_with_cert_ipv6_san").trim();
-        let mut consumer = init_consumer_with(leaf_input).await;
-        let mut buf: Vec<u8> = Vec::new();
-        let result = consumer.consume(Cursor::new(&mut buf)).await;
-        assert!(result.is_ok());
-        let info = serde_json::from_slice::<CertInfo>(&buf).unwrap();
-        assert_eq!(
-            info.san,
-            vec![SanObject::Ipv6Addr("fe80::76d0:2bff:fec6:a415".to_owned())]
-        );
-    }
-
-    #[tokio::test]
-    async fn consume_should_correctly_decode_san_with_ipv4_and_dns() {
-        let leaf_input =
-            include_str!("../resources/test/leaf_input_with_cert_ip_and_dns_san").trim();
-        let mut consumer = init_consumer_with(leaf_input).await;
-        let mut buf: Vec<u8> = Vec::new();
-        let result = consumer.consume(Cursor::new(&mut buf)).await;
-        assert!(result.is_ok());
-        let info = serde_json::from_slice::<CertInfo>(&buf).unwrap();
-        assert_eq!(
-            info.san,
-            vec![
-                SanObject::Ipv4Addr("1.33.202.142".to_owned()),
-                SanObject::DnsName("1.33.202.142".to_owned())
-            ]
-        );
-    }
 
     #[tokio::test]
     async fn consume_should_store_full_cert() {
@@ -296,23 +140,6 @@ mod test {
             assert_eq!(info.unwrap().position, position);
             position += 1;
         }
-    }
-
-    #[tokio::test]
-    async fn consume_should_extract_subject_alternative_names() {
-        let leaf_input = include_str!("../resources/test/leaf_input_with_cert").trim();
-        let mut consumer = init_consumer_with(leaf_input).await;
-        let mut buf: Vec<u8> = Vec::new();
-        let result = consumer.consume(Cursor::new(&mut buf)).await;
-        let info = serde_json::from_slice::<CertInfo>(&buf).unwrap();
-        assert!(result.is_ok());
-        assert_eq!(
-            info.san,
-            vec![
-                SanObject::DnsName("www.libraryav.com.au".to_owned()),
-                SanObject::DnsName("libraryav.com.au".to_owned())
-            ]
-        );
     }
 
     #[tokio::test]

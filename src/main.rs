@@ -1,5 +1,6 @@
 pub mod client;
 mod consumer;
+pub mod parser;
 pub mod producer;
 
 use client::HttpCtClient;
@@ -38,8 +39,8 @@ async fn signal_handler(signal_tx: oneshot::Sender<()>) -> Result<(), Box<dyn Er
     let mut sigint = signal(SignalKind::interrupt())?;
     sigint.recv().await;
     if signal_tx.send(()).is_err() {
-        println!("An error occurred propagating signal to tasks!");
+        eprintln!("An error occurred propagating signal to tasks!");
     }
-    println!("Attempting to gracefully let tasks complete.");
+    eprintln!("Attempting to gracefully let tasks complete.");
     Ok(())
 }
