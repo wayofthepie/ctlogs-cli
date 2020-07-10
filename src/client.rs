@@ -143,7 +143,7 @@ mod test {
         Mock, MockServer, ResponseTemplate,
     };
 
-    const LEAF_INPUT: &str = include_str!("../resources/leaf_input_with_cert");
+    const LEAF_INPUT: &str = include_str!("../resources/test/leaf_input_with_cert");
 
     #[tokio::test]
     async fn get_entries_should_retry_three_times_if_it_fails() {

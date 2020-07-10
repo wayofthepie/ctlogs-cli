@@ -166,7 +166,8 @@ mod test {
 
     #[tokio::test]
     async fn consume_should_decode_san_with_othername_type() {
-        let leaf_input = include_str!("../resources/leaf_input_with_cert__san_rfc822name").trim();
+        let leaf_input =
+            include_str!("../resources/test/leaf_input_with_cert__san_rfc822name").trim();
         let mut consumer = init_consumer_with(leaf_input).await;
         let mut buf: Vec<u8> = Vec::new();
         let result = consumer.consume(Cursor::new(&mut buf)).await;
@@ -180,7 +181,7 @@ mod test {
 
     #[tokio::test]
     async fn consume_should_correctly_decode_san_with_ipv6() {
-        let leaf_input = include_str!("../resources/leaf_input_with_cert_ipv6_san").trim();
+        let leaf_input = include_str!("../resources/test/leaf_input_with_cert_ipv6_san").trim();
         let mut consumer = init_consumer_with(leaf_input).await;
         let mut buf: Vec<u8> = Vec::new();
         let result = consumer.consume(Cursor::new(&mut buf)).await;
@@ -194,7 +195,8 @@ mod test {
 
     #[tokio::test]
     async fn consume_should_correctly_decode_san_with_ipv4_and_dns() {
-        let leaf_input = include_str!("../resources/leaf_input_with_cert_ip_and_dns_san").trim();
+        let leaf_input =
+            include_str!("../resources/test/leaf_input_with_cert_ip_and_dns_san").trim();
         let mut consumer = init_consumer_with(leaf_input).await;
         let mut buf: Vec<u8> = Vec::new();
         let result = consumer.consume(Cursor::new(&mut buf)).await;
@@ -211,7 +213,7 @@ mod test {
 
     #[tokio::test]
     async fn consume_should_store_full_cert() {
-        let leaf_input = include_str!("../resources/leaf_input_with_cert").trim();
+        let leaf_input = include_str!("../resources/test/leaf_input_with_cert").trim();
         let mut consumer = init_consumer_with(leaf_input).await;
         let mut buf: Vec<u8> = Vec::new();
         let result = consumer.consume(Cursor::new(&mut buf)).await;
@@ -230,9 +232,9 @@ mod test {
     async fn consume_should_skip_cert_if_it_fails_to_parse() {
         let start_position = 7777;
         let expected_position = start_position + 1;
-        let leaf_input = include_str!("../resources/leaf_input_with_cert").trim();
+        let leaf_input = include_str!("../resources/test/leaf_input_with_cert").trim();
         let leaf_input_with_invalid_cert =
-            include_str!("../resources/leaf_input_with_invalid_cert").trim();
+            include_str!("../resources/test/leaf_input_with_invalid_cert").trim();
         let (mut logs_tx, logs_rx) = mpsc::channel(10);
         let mut consumer = Consumer::new(logs_rx);
         logs_tx
@@ -264,7 +266,7 @@ mod test {
     #[tokio::test]
     async fn consume_should_store_position_of_each_log_entry() {
         let mut position = 7777;
-        let leaf_input = include_str!("../resources/leaf_input_with_cert").trim();
+        let leaf_input = include_str!("../resources/test/leaf_input_with_cert").trim();
         let (mut logs_tx, logs_rx) = mpsc::channel(10);
         let mut consumer = Consumer::new(logs_rx);
         logs_tx
@@ -298,7 +300,7 @@ mod test {
 
     #[tokio::test]
     async fn consume_should_extract_subject_alternative_names() {
-        let leaf_input = include_str!("../resources/leaf_input_with_cert").trim();
+        let leaf_input = include_str!("../resources/test/leaf_input_with_cert").trim();
         let mut consumer = init_consumer_with(leaf_input).await;
         let mut buf: Vec<u8> = Vec::new();
         let result = consumer.consume(Cursor::new(&mut buf)).await;
@@ -315,7 +317,7 @@ mod test {
 
     #[tokio::test]
     async fn consume_should_skip_precerts() {
-        let leaf_input = include_str!("../resources/leaf_input_with_precert").trim();
+        let leaf_input = include_str!("../resources/test/leaf_input_with_precert").trim();
         let mut consumer = init_consumer_with(leaf_input).await;
         let mut buf: Vec<u8> = Vec::new();
         let result = consumer.consume(Cursor::new(&mut buf)).await;
@@ -325,7 +327,7 @@ mod test {
 
     #[tokio::test]
     async fn consume_should_extract_subject() {
-        let leaf_input = include_str!("../resources/leaf_input_with_cert").trim();
+        let leaf_input = include_str!("../resources/test/leaf_input_with_cert").trim();
         let mut consumer = init_consumer_with(leaf_input).await;
         let mut buf: Vec<u8> = Vec::new();
         let result = consumer.consume(Cursor::new(&mut buf)).await;
@@ -336,7 +338,7 @@ mod test {
 
     #[tokio::test]
     async fn consume_should_extract_issuer() {
-        let leaf_input = include_str!("../resources/leaf_input_with_cert").trim();
+        let leaf_input = include_str!("../resources/test/leaf_input_with_cert").trim();
         let mut consumer = init_consumer_with(leaf_input).await;
         let mut buf: Vec<u8> = Vec::new();
         let result = consumer.consume(Cursor::new(&mut buf)).await;
