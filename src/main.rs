@@ -23,13 +23,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let (sigint_tx, sigint_rx) = oneshot::channel();
     let client = Box::new(HttpCtClient::new(CT_LOGS_URL));
     let (tx, rx) = mpsc::channel(2000);
+    let producer = Producer::new(client, tx, sigint_rx);
     let mut consumer = Consumer::new(rx);
-    let result = try_join!(
-        Producer::new(client, tx, sigint_rx).produce(),
+    match try_join!(
+        producer.produce(),
         consumer.consume(writer),
         signal_handler(sigint_tx)
-    );
-    match result {
+    ) {
         Ok((_, _, _)) => Ok(()),
         errs => Err(format!("Error occurred: {:#?}", errs).into()),
     }
