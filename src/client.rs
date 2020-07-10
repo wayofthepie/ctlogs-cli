@@ -62,10 +62,10 @@ impl HttpCtClient {
 const TIMEOUT_MS: u64 = 1;
 
 #[cfg(not(test))]
-const TIMEOUT_MS: u64 = 100;
+const TIMEOUT_MS: u64 = 2000;
 const REQUEST_CLONE_ERROR: &str =
     "An error occurred cloning the client request, this should not happen.";
-const RETRY_LIMIT: u32 = 3;
+const RETRY_LIMIT: u64 = 3;
 
 impl HttpCtClient {
     async fn request(&self, request: Request) -> Result<reqwest::Response, Box<dyn Error>> {
@@ -83,17 +83,17 @@ impl HttpCtClient {
         }
     }
 
-    async fn handle_error(&self, response: Response, count: u32) -> Result<(), Box<dyn Error>> {
+    async fn handle_error(&self, response: Response, count: u64) -> Result<(), Box<dyn Error>> {
         let body = response
             .text()
             .await
             .map_or_else(|_| "unknown".into(), |body| body);
-        let delay = TIMEOUT_MS.pow(count);
-        println!(
+        let delay = TIMEOUT_MS * count;
+        eprintln!(
             "Retrying in {}ms because an error occurred: {}",
             delay, body
         );
-        tokio::time::delay_for(tokio::time::Duration::from_millis(TIMEOUT_MS.pow(count))).await;
+        tokio::time::delay_for(tokio::time::Duration::from_millis(delay)).await;
         if count == RETRY_LIMIT {
             return Err(format!("An error occurred: {}", body).into());
         }
