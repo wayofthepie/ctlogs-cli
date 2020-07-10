@@ -51,7 +51,7 @@ impl Consumer {
                 let bytes = base64::decode(&entry.leaf_input)?;
                 let entry_type = bytes[10] + bytes[11];
                 if entry_type != 0 {
-                    // Found precert, ignore.
+                    eprintln!("Found precert at position {}, ignoring.", position);
                     continue;
                 } else {
                     let start = 15;
@@ -83,13 +83,13 @@ fn extract_cert_info(cert: TbsCertificate, position: usize) -> Result<CertInfo, 
     cert_info.subject = cert.subject.to_string();
     for extension in cert.extensions {
         if let Ok(Nid::SubjectAltName) = oid2nid(&extension.oid) {
-            cert_info.san = parse_san(extension.value, position)?;
+            cert_info.san = parse_san(extension.value)?;
         }
     }
     Ok(cert_info)
 }
 
-fn parse_san(bytes: &[u8], position: usize) -> Result<Vec<SanObject>, Box<dyn Error>> {
+fn parse_san(bytes: &[u8]) -> Result<Vec<SanObject>, Box<dyn Error>> {
     let (_, obj) = der_parser::parse_der(bytes)?;
     let san_objects = obj
         .as_sequence()?
@@ -104,10 +104,7 @@ fn parse_san(bytes: &[u8], position: usize) -> Result<Vec<SanObject>, Box<dyn Er
                 2 => SanObject::DnsName(String::from_utf8_lossy(bytes).to_string()),
                 // ip address
                 7 => bytes_to_san_ip(&bytes),
-                _ => {
-                    eprintln!("{} {}", position, tag.0);
-                    SanObject::Unknown(String::from_utf8_lossy(bytes).to_string())
-                }
+                _ => SanObject::Unknown(String::from_utf8_lossy(bytes).to_string()),
             },
             _ => SanObject::Unknown(String::from_utf8_lossy(bytes).to_string()),
         })
@@ -116,9 +113,10 @@ fn parse_san(bytes: &[u8], position: usize) -> Result<Vec<SanObject>, Box<dyn Er
 }
 
 fn bytes_to_san_ip(bytes: &[u8]) -> SanObject {
-    if bytes.len() == 4 {
+    let len = bytes.len();
+    if len == 4 {
         SanObject::Ipv4Addr(Ipv4Addr::new(bytes[0], bytes[1], bytes[2], bytes[3]).to_string())
-    } else {
+    } else if len == 16 {
         SanObject::Ipv6Addr(
             Ipv6Addr::new(
                 u16::from_be_bytes([bytes[0], bytes[1]]),
@@ -132,6 +130,9 @@ fn bytes_to_san_ip(bytes: &[u8]) -> SanObject {
             )
             .to_string(),
         )
+    } else {
+        // TODO think of a better way of signifying invalid data here
+        SanObject::Ipv4Addr("Invalid".to_owned())
     }
 }
 
