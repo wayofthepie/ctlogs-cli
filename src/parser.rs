@@ -31,14 +31,10 @@ pub enum SanObject {
     Unknown(String),
 }
 
-pub fn parse_x509_bytes(
-    bytes: &[u8],
-    cert_end_index: usize,
-    position: usize,
-) -> Result<CertInfo, Box<dyn Error>> {
-    let (_, cert) = x509_parser::parse_x509_der(&bytes[..cert_end_index])?;
+pub fn parse_x509_bytes(bytes: &[u8], position: usize) -> Result<CertInfo, Box<dyn Error>> {
+    let (_, cert) = x509_parser::parse_x509_der(bytes)?;
     let mut info = extract_cert_info(cert.tbs_certificate, position)?;
-    info.cert = base64::encode(&bytes[..cert_end_index]);
+    info.cert = base64::encode(&bytes);
     Ok(info)
 }
 
@@ -130,7 +126,7 @@ mod test {
     async fn parse_x509_bytes_should_decode_othername_in_san_and_save_base64_encoded() {
         let cert = include_str!("../resources/test/cert__san_with_othername.crt").trim();
         let bytes = base64::decode(cert).unwrap();
-        let result = parse_x509_bytes(&bytes, bytes.len(), 0);
+        let result = parse_x509_bytes(&bytes, 0);
         assert!(result.is_ok());
         assert_eq!(
             result.unwrap().san,
@@ -161,7 +157,7 @@ mod test {
     async fn parse_x509_bytes_should_decode_san_with_rfc822name() {
         let cert = include_str!("../resources/test/cert__san_with_rfc822name.crt").trim();
         let bytes = base64::decode(cert).unwrap();
-        let result = parse_x509_bytes(&bytes, bytes.len(), 0);
+        let result = parse_x509_bytes(&bytes, 0);
         assert!(result.is_ok());
         assert_eq!(
             result.unwrap().san,
@@ -173,7 +169,7 @@ mod test {
     async fn parse_x509_bytes_should_correctly_decode_san_with_ipv6() {
         let cert = include_str!("../resources/test/cert__san_with_ipv6.crt").trim();
         let bytes = base64::decode(cert).unwrap();
-        let result = parse_x509_bytes(&bytes, bytes.len(), 0);
+        let result = parse_x509_bytes(&bytes, 0);
         assert!(result.is_ok());
         assert_eq!(
             result.unwrap().san,
@@ -185,7 +181,7 @@ mod test {
     async fn parse_x509_bytes_should_correctly_decode_san_with_ipv4() {
         let cert = include_str!("../resources/test/cert__san_with_ipv4.crt").trim();
         let bytes = base64::decode(cert).unwrap();
-        let result = parse_x509_bytes(&bytes, bytes.len(), 0);
+        let result = parse_x509_bytes(&bytes, 0);
         assert!(result.is_ok());
         assert_eq!(
             result.unwrap().san,
@@ -197,7 +193,7 @@ mod test {
     async fn parse_x509_bytes_should_correctly_decode_san_with_dns() {
         let cert = include_str!("../resources/test/cert__san_with_dns.crt").trim();
         let bytes = base64::decode(cert).unwrap();
-        let result = parse_x509_bytes(&bytes, bytes.len(), 0);
+        let result = parse_x509_bytes(&bytes, 0);
         assert!(result.is_ok());
         assert_eq!(
             result.unwrap().san,

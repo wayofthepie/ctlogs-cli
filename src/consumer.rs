@@ -23,9 +23,9 @@ impl Consumer {
                 if entry_type != 0 {
                     eprintln!("Found precert at position {}, ignoring.", position);
                 } else {
-                    let cert_end_index = u32::from_be_bytes([0, bytes[12], bytes[13], bytes[14]]);
-                    match parser::parse_x509_bytes(&bytes[15..], cert_end_index as usize, position)
-                    {
+                    let cert_end_index =
+                        u32::from_be_bytes([0, bytes[12], bytes[13], bytes[14]]) as usize + 15;
+                    match parser::parse_x509_bytes(&bytes[15..cert_end_index], position) {
                         Ok(info) => {
                             let bytes = serde_json::to_vec(&info)?;
                             writer.write_all(&bytes).await?;
