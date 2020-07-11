@@ -27,6 +27,7 @@ pub enum SanObject {
     Ipv6Addr(String),
     Rfc822Name(String),
     Othername(String),
+    X400Address(String),
     Unknown(String),
 }
 
@@ -48,13 +49,13 @@ fn extract_cert_info(cert: TbsCertificate, position: usize) -> Result<CertInfo, 
     cert_info.subject = cert.subject.to_string();
     for extension in cert.extensions {
         if let Ok(Nid::SubjectAltName) = oid2nid(&extension.oid) {
-            cert_info.san = parse_san(extension.value)?;
+            cert_info.san = parse_san(extension.value, position)?;
         }
     }
     Ok(cert_info)
 }
 
-fn parse_san(bytes: &[u8]) -> Result<Vec<SanObject>, Box<dyn Error>> {
+fn parse_san(bytes: &[u8], position: usize) -> Result<Vec<SanObject>, Box<dyn Error>> {
     let (_, obj) = der_parser::parse_der(bytes)?;
     let san_objects = obj
         .as_sequence()?
@@ -70,11 +71,28 @@ fn parse_san(bytes: &[u8]) -> Result<Vec<SanObject>, Box<dyn Error>> {
                 1 => SanObject::Rfc822Name(String::from_utf8_lossy(bytes).to_string()),
                 // dns name
                 2 => SanObject::DnsName(String::from_utf8_lossy(bytes).to_string()),
+                // x400Address
+                3 => {
+                    // TODO construct a cert with an x400Address in the san, openssl
+                    // does not seem to support this. One may exist in the ct logs or
+                    // we can hand create one.
+                    eprintln!("Encountered x400 address at position {}", position);
+                    SanObject::Unknown(String::from_utf8_lossy(bytes).to_string())
+                }
                 // ip address
                 7 => bytes_to_san_ip(&bytes),
-                _ => SanObject::Unknown(String::from_utf8_lossy(bytes).to_string()),
+                _ => {
+                    eprintln!("Encountered unknown tag {} at position {}", tag, position);
+                    SanObject::Unknown(String::from_utf8_lossy(bytes).to_string())
+                }
             },
-            _ => SanObject::Unknown(String::from_utf8_lossy(bytes).to_string()),
+            _ => {
+                eprintln!(
+                    "Encountered unknown ber object {:?} at position {}",
+                    item, position
+                );
+                SanObject::Unknown(String::from_utf8_lossy(bytes).to_string())
+            }
         })
         .collect();
     Ok(san_objects)
