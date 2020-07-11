@@ -61,6 +61,9 @@ fn parse_san(bytes: &[u8]) -> Result<Vec<SanObject>, Box<dyn Error>> {
         .iter()
         .map(|item| match item.content {
             BerObjectContent::Unknown(tag, bytes) => match tag.0 {
+                // othername
+                // TODO decode this correctly and not just as base64
+                0 => SanObject::Othername(base64::encode(&bytes)),
                 // rfc822name
                 // TODO emails can have non-utf8 characters,
                 // they should be accounted for here too
@@ -104,6 +107,20 @@ fn bytes_to_san_ip(bytes: &[u8]) -> SanObject {
 #[cfg(test)]
 mod test {
     use super::{parse_x509_bytes, SanObject};
+
+    #[tokio::test]
+    async fn parse_x509_bytes_should_decode_othername_in_san_and_save_base64_encoded() {
+        let cert = include_str!("../resources/test/cert__san_with_othername.crt").trim();
+        let bytes = base64::decode(cert).unwrap();
+        let result = parse_x509_bytes(&bytes, bytes.len(), 0);
+        assert!(result.is_ok());
+        assert_eq!(
+            result.unwrap().san,
+            vec![SanObject::Othername(
+                "BgEqoBEMD3Rlc3Qgb3RoZXIgbmFtZQ==".to_owned()
+            )]
+        );
+    }
 
     #[tokio::test]
     async fn should_serialize_san_object_fields_with_snake_case() {
