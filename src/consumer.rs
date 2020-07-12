@@ -22,7 +22,6 @@ impl Consumer {
                 let entry_type = bytes[10] + bytes[11];
                 if entry_type != 0 {
                     eprintln!("Found precert at position {}, ignoring.", position);
-                    continue;
                 } else {
                     let cert_end_index = u32::from_be_bytes([0, bytes[12], bytes[13], bytes[14]]);
                     match parser::parse_x509_bytes(&bytes[15..], cert_end_index as usize, position)
@@ -34,8 +33,8 @@ impl Consumer {
                         }
                         Err(err) => eprintln!("Error at position {}: {}", position, err),
                     }
-                    position += 1;
                 }
+                position += 1;
             }
         }
         writer.shutdown().await?;
