@@ -1,11 +1,10 @@
-use der_parser::ber::BerObjectContent;
 use serde::{Deserialize, Serialize};
 use std::{
     error::Error,
     net::{Ipv4Addr, Ipv6Addr},
 };
 use x509_parser::{
-    objects::{oid2nid, Nid},
+    extensions::{GeneralName, ParsedExtension, SubjectAlternativeName},
     TbsCertificate,
 };
 
@@ -26,9 +25,35 @@ pub enum SanObject {
     Ipv4Addr(String),
     Ipv6Addr(String),
     Rfc822Name(String),
-    Othername(String),
+    Othername(OtherName),
     X400Address(String),
+    DirName(Vec<NamePart>),
+    InvalidIpAddress(String),
     Unknown(String),
+}
+
+#[derive(Debug, Deserialize, Serialize, PartialEq)]
+pub struct OtherName {
+    oid: String,
+    name: String,
+}
+
+impl OtherName {
+    pub fn new(oid: String, name: String) -> Self {
+        Self { oid, name }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, PartialEq)]
+pub struct NamePart {
+    tag: String,
+    value: String,
+}
+
+impl NamePart {
+    pub fn new(tag: String, value: String) -> Self {
+        Self { tag, value }
+    }
 }
 
 pub fn parse_x509_bytes(bytes: &[u8], position: usize) -> Result<CertInfo, Box<dyn Error>> {
@@ -43,57 +68,32 @@ fn extract_cert_info(cert: TbsCertificate, position: usize) -> Result<CertInfo, 
     cert_info.position = position;
     cert_info.issuer = cert.issuer.to_string();
     cert_info.subject = cert.subject.to_string();
-    for extension in cert.extensions {
-        if let Ok(Nid::SubjectAltName) = oid2nid(&extension.oid) {
-            cert_info.san = parse_san(extension.value, position)?;
-        }
-    }
+    cert_info.san = cert
+        .extensions
+        .into_iter()
+        .filter_map(|(_, extension)| match extension.parsed_extension() {
+            ParsedExtension::SubjectAlternativeName(san) => Some(handle_san(san)),
+            _ => None,
+        })
+        .flatten()
+        .collect();
     Ok(cert_info)
 }
 
-fn parse_san(bytes: &[u8], position: usize) -> Result<Vec<SanObject>, Box<dyn Error>> {
-    let (_, obj) = der_parser::parse_der(bytes)?;
-    let san_objects = obj
-        .as_sequence()?
+fn handle_san(san: &SubjectAlternativeName) -> Vec<SanObject> {
+    san.general_names
         .iter()
-        .map(|item| match item.content {
-            BerObjectContent::Unknown(tag, bytes) => match tag.0 {
-                // othername
-                // TODO decode this correctly and not just as base64
-                0 => SanObject::Othername(base64::encode(&bytes)),
-                // rfc822name
-                // TODO emails can have non-utf8 characters,
-                // they should be accounted for here too
-                1 => SanObject::Rfc822Name(String::from_utf8_lossy(bytes).to_string()),
-                // dns name
-                2 => SanObject::DnsName(String::from_utf8_lossy(bytes).to_string()),
-                // x400Address
-                3 => {
-                    // TODO construct a cert with an x400Address in the san, openssl
-                    // does not seem to support this. One may exist in the ct logs or
-                    // we can hand create one.
-                    eprintln!("Encountered x400 address at position {}", position);
-                    SanObject::Unknown(String::from_utf8_lossy(bytes).to_string())
-                }
-                // ip address
-                7 => bytes_to_san_ip(&bytes),
-                _ => {
-                    eprintln!("Encountered unknown tag {} at position {}", tag, position);
-                    SanObject::Unknown(String::from_utf8_lossy(bytes).to_string())
-                }
-            },
-            _ => {
-                eprintln!(
-                    "Encountered unknown ber object {:?} at position {}",
-                    item, position
-                );
-                SanObject::Unknown(String::from_utf8_lossy(bytes).to_string())
+        .map(|name| match name {
+            &GeneralName::IPAddress(bytes) => bytes_to_san_ip(bytes),
+            &GeneralName::RFC822Name(name) => SanObject::Rfc822Name(name.to_owned()),
+            &GeneralName::DNSName(name) => SanObject::DnsName(name.to_string()),
+            GeneralName::OtherName(oid, bytes) => {
+                SanObject::Othername(OtherName::new(oid.to_string(), base64::encode(bytes)))
             }
+            _ => SanObject::Unknown("".into()),
         })
-        .collect();
-    Ok(san_objects)
+        .collect()
 }
-
 fn bytes_to_san_ip(bytes: &[u8]) -> SanObject {
     let len = bytes.len();
     if len == 4 {
@@ -114,13 +114,13 @@ fn bytes_to_san_ip(bytes: &[u8]) -> SanObject {
         )
     } else {
         // TODO think of a better way of signifying invalid data here
-        SanObject::Ipv4Addr("Invalid".to_owned())
+        SanObject::InvalidIpAddress("Invalid".to_owned())
     }
 }
 
 #[cfg(test)]
 mod test {
-    use super::{parse_x509_bytes, SanObject};
+    use super::{parse_x509_bytes, OtherName, SanObject};
 
     #[tokio::test]
     async fn parse_x509_bytes_should_decode_othername_in_san_and_save_base64_encoded() {
@@ -130,9 +130,10 @@ mod test {
         assert!(result.is_ok());
         assert_eq!(
             result.unwrap().san,
-            vec![SanObject::Othername(
-                "BgEqoBEMD3Rlc3Qgb3RoZXIgbmFtZQ==".to_owned()
-            )]
+            vec![SanObject::Othername(OtherName::new(
+                "1.2".to_owned(),
+                "oBEMD3Rlc3Qgb3RoZXIgbmFtZQ==".to_owned()
+            ))]
         );
     }
 
@@ -143,13 +144,17 @@ mod test {
             SanObject::Rfc822Name("".to_owned()),
             SanObject::Ipv4Addr("".to_owned()),
             SanObject::Ipv6Addr("".to_owned()),
-            SanObject::Othername("".to_owned()),
-            SanObject::Unknown("".to_owned()),
+            SanObject::Othername(OtherName::new("".to_owned(), "".to_owned())),
+            SanObject::InvalidIpAddress("".to_owned()),
         ];
         let san_objects_str = serde_json::to_string(&san_objects).unwrap();
         assert_eq!(
             san_objects_str,
-            r#"[{"dns_name":""},{"rfc822_name":""},{"ipv4_addr":""},{"ipv6_addr":""},{"othername":""},{"unknown":""}]"#
+            format!(
+                "{}{}",
+                r#"[{"dns_name":""},{"rfc822_name":""},{"ipv4_addr":""},"#,
+                r#"{"ipv6_addr":""},{"othername":{"oid":"","name":""}},{"invalid_ip_address":""}]"#
+            )
         );
     }
 
