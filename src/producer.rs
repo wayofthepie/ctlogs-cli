@@ -26,11 +26,13 @@ impl LogsChunk {
 
 const CONCURRENCY_LEVEL: usize = 12;
 
+pub type PinnedStream<T> = Pin<Box<dyn Stream<Item = Result<T, Box<dyn Error>>>>>;
+
 pub fn produce(
     client: impl CtClient + Clone + Send + Sync + 'static,
     tree_size: usize,
     sigint: Arc<AtomicBool>,
-) -> Pin<Box<dyn Stream<Item = Result<LogsChunk, Box<dyn Error>>>>> {
+) -> PinnedStream<LogsChunk> {
     stream::iter(gen_iterator(tree_size))
         .map_ok(move |(start, end)| {
             let c = client.clone();
