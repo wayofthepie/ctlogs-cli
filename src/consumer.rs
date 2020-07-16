@@ -1,10 +1,13 @@
-use crate::{parser, producer::LogsChunk};
-use futures::{Stream, StreamExt};
-use std::{error::Error, pin::Pin};
+use crate::{
+    parser,
+    producer::{LogsChunk, PinnedStream},
+};
+use futures::StreamExt;
+use std::error::Error;
 use tokio::io::{AsyncWrite, AsyncWriteExt};
 
 pub async fn consume(
-    mut stream: Pin<Box<dyn Stream<Item = Result<LogsChunk, Box<dyn Error>>>>>,
+    mut stream: PinnedStream<LogsChunk>,
     mut writer: impl AsyncWrite + Unpin + Send,
 ) -> Result<(), Box<dyn Error>> {
     while let Some(maybe_chunk) = stream.next().await {
