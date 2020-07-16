@@ -1,65 +1,65 @@
 use crate::{parser, producer::LogsChunk};
-use std::error::Error;
+use futures::{Stream, StreamExt};
+use std::{error::Error, pin::Pin};
 use tokio::io::{AsyncWrite, AsyncWriteExt};
-use tokio::sync::mpsc;
 
-pub struct Consumer {
-    chunk_rx: mpsc::Receiver<LogsChunk>,
-}
-
-impl Consumer {
-    pub fn new(chunk_rx: mpsc::Receiver<LogsChunk>) -> Self {
-        Self { chunk_rx }
-    }
-
-    pub async fn consume(
-        &mut self,
-        mut writer: impl AsyncWrite + Unpin + Send,
-    ) -> Result<(), Box<dyn Error>> {
-        while let Some(LogsChunk { logs, mut position }) = self.chunk_rx.recv().await {
-            for entry in logs.entries {
-                let bytes = base64::decode(&entry.leaf_input)?;
-                let entry_type = bytes[10] + bytes[11];
-                if entry_type != 0 {
-                    eprintln!("Found precert at position {}, ignoring.", position);
-                } else {
-                    let cert_end_index =
-                        u32::from_be_bytes([0, bytes[12], bytes[13], bytes[14]]) as usize + 15;
-                    match parser::parse_x509_bytes(&bytes[15..cert_end_index], position) {
-                        Ok(info) => {
-                            let bytes = serde_json::to_vec(&info)?;
-                            writer.write_all(&bytes).await?;
-                            writer.write_all(b"\n").await?;
-                        }
-                        Err(err) => eprintln!("Error at position {}: {}", position, err),
+pub async fn consume(
+    mut stream: Pin<Box<dyn Stream<Item = Result<LogsChunk, Box<dyn Error>>>>>,
+    mut writer: impl AsyncWrite + Unpin + Send,
+) -> Result<(), Box<dyn Error>> {
+    while let Some(maybe_chunk) = stream.next().await {
+        let LogsChunk { logs, mut position } = maybe_chunk?;
+        for entry in logs.entries {
+            let bytes = base64::decode(&entry.leaf_input)?;
+            let entry_type = bytes[10] + bytes[11];
+            if entry_type != 0 {
+                eprintln!("Found precert at position {}, ignoring.", position);
+            } else {
+                let cert_end_index =
+                    u32::from_be_bytes([0, bytes[12], bytes[13], bytes[14]]) as usize + 15;
+                match parser::parse_x509_bytes(&bytes[15..cert_end_index], position) {
+                    Ok(info) => {
+                        let bytes = serde_json::to_vec(&info)?;
+                        writer.write_all(&bytes).await?;
+                        writer.write_all(b"\n").await?;
                     }
+                    Err(err) => eprintln!("Error at position {}: {}", position, err),
                 }
-                position += 1;
             }
+            position += 1;
         }
-        writer.shutdown().await?;
-        Ok(())
     }
+    writer.shutdown().await?;
+    Ok(())
 }
 
 #[cfg(test)]
 mod test {
-    use super::Consumer;
+    use super::consume;
     use crate::{
         client::{LogEntry, Logs},
         parser::CertInfo,
         producer::LogsChunk,
     };
-    use std::io::Cursor;
+    use futures::{stream, StreamExt};
+    use std::{io::Cursor, iter};
     use tokio;
-    use tokio::sync::mpsc;
 
     #[tokio::test]
     async fn consume_should_store_full_cert() {
         let leaf_input = include_str!("../resources/test/leaf_input_with_cert").trim();
-        let mut consumer = init_consumer_with(leaf_input).await;
         let mut buf: Vec<u8> = Vec::new();
-        let result = consumer.consume(Cursor::new(&mut buf)).await;
+        let chunk = LogsChunk {
+            logs: Logs {
+                entries: vec![LogEntry {
+                    leaf_input: leaf_input.to_owned(),
+                    extra_data: "".to_owned(),
+                }],
+            },
+            position: 0,
+        };
+        let stream = stream::iter(iter::once(Ok(chunk))).boxed_local();
+        let result = consume(stream, Cursor::new(&mut buf)).await;
         assert!(result.is_ok());
         let info = serde_json::from_slice::<CertInfo>(&buf).unwrap();
         let leaf_bytes = base64::decode(leaf_input.as_bytes()).unwrap();
@@ -78,29 +78,24 @@ mod test {
         let leaf_input = include_str!("../resources/test/leaf_input_with_cert").trim();
         let leaf_input_with_invalid_cert =
             include_str!("../resources/test/leaf_input_with_invalid_cert").trim();
-        let (mut logs_tx, logs_rx) = mpsc::channel(10);
-        let mut consumer = Consumer::new(logs_rx);
-        logs_tx
-            .send(LogsChunk {
-                logs: Logs {
-                    entries: vec![
-                        LogEntry {
-                            leaf_input: leaf_input_with_invalid_cert.to_owned(),
-                            extra_data: "".to_owned(),
-                        },
-                        LogEntry {
-                            leaf_input: leaf_input.to_owned(),
-                            extra_data: "".to_owned(),
-                        },
-                    ],
-                },
-                position: start_position,
-            })
-            .await
-            .unwrap();
-        drop(logs_tx);
+        let chunk = LogsChunk {
+            logs: Logs {
+                entries: vec![
+                    LogEntry {
+                        leaf_input: leaf_input_with_invalid_cert.to_owned(),
+                        extra_data: "".to_owned(),
+                    },
+                    LogEntry {
+                        leaf_input: leaf_input.to_owned(),
+                        extra_data: "".to_owned(),
+                    },
+                ],
+            },
+            position: 7777,
+        };
+        let stream = stream::iter(iter::once(Ok(chunk))).boxed_local();
         let mut buf: Vec<u8> = Vec::new();
-        let result = consumer.consume(Cursor::new(&mut buf)).await;
+        let result = consume(stream, Cursor::new(&mut buf)).await;
         assert!(result.is_ok());
         let info = serde_json::from_slice::<CertInfo>(&buf).unwrap();
         assert_eq!(info.position, expected_position);
@@ -110,29 +105,24 @@ mod test {
     async fn consume_should_store_position_of_each_log_entry() {
         let mut position = 7777;
         let leaf_input = include_str!("../resources/test/leaf_input_with_cert").trim();
-        let (mut logs_tx, logs_rx) = mpsc::channel(10);
-        let mut consumer = Consumer::new(logs_rx);
-        logs_tx
-            .send(LogsChunk {
-                logs: Logs {
-                    entries: vec![
-                        LogEntry {
-                            leaf_input: leaf_input.to_owned(),
-                            extra_data: "".to_owned(),
-                        },
-                        LogEntry {
-                            leaf_input: leaf_input.to_owned(),
-                            extra_data: "".to_owned(),
-                        },
-                    ],
-                },
-                position,
-            })
-            .await
-            .unwrap();
-        drop(logs_tx);
+        let chunk = LogsChunk {
+            logs: Logs {
+                entries: vec![
+                    LogEntry {
+                        leaf_input: leaf_input.to_owned(),
+                        extra_data: "".to_owned(),
+                    },
+                    LogEntry {
+                        leaf_input: leaf_input.to_owned(),
+                        extra_data: "".to_owned(),
+                    },
+                ],
+            },
+            position: 7777,
+        };
+        let stream = stream::iter(iter::once(Ok(chunk))).boxed_local();
         let mut buf: Vec<u8> = Vec::new();
-        let result = consumer.consume(Cursor::new(&mut buf)).await;
+        let result = consume(stream, Cursor::new(&mut buf)).await;
         let deserialize = serde_json::Deserializer::from_slice(&buf);
         assert!(result.is_ok());
         for info in deserialize.into_iter::<CertInfo>() {
@@ -144,9 +134,18 @@ mod test {
     #[tokio::test]
     async fn consume_should_skip_precerts() {
         let leaf_input = include_str!("../resources/test/leaf_input_with_precert").trim();
-        let mut consumer = init_consumer_with(leaf_input).await;
+        let chunk = LogsChunk {
+            logs: Logs {
+                entries: vec![LogEntry {
+                    leaf_input: leaf_input.to_owned(),
+                    extra_data: "".to_owned(),
+                }],
+            },
+            position: 0,
+        };
+        let stream = stream::iter(iter::once(Ok(chunk))).boxed_local();
         let mut buf: Vec<u8> = Vec::new();
-        let result = consumer.consume(Cursor::new(&mut buf)).await;
+        let result = consume(stream, Cursor::new(&mut buf)).await;
         assert!(result.is_ok());
         assert!(buf.is_empty());
     }
@@ -154,9 +153,18 @@ mod test {
     #[tokio::test]
     async fn consume_should_extract_subject() {
         let leaf_input = include_str!("../resources/test/leaf_input_with_cert").trim();
-        let mut consumer = init_consumer_with(leaf_input).await;
+        let chunk = LogsChunk {
+            logs: Logs {
+                entries: vec![LogEntry {
+                    leaf_input: leaf_input.to_owned(),
+                    extra_data: "".to_owned(),
+                }],
+            },
+            position: 0,
+        };
+        let stream = stream::iter(iter::once(Ok(chunk))).boxed_local();
         let mut buf: Vec<u8> = Vec::new();
-        let result = consumer.consume(Cursor::new(&mut buf)).await;
+        let result = consume(stream, Cursor::new(&mut buf)).await;
         let info = serde_json::from_slice::<CertInfo>(&buf).unwrap();
         assert!(result.is_ok());
         assert_eq!(info.subject, "CN=www.libraryav.com.au");
@@ -165,9 +173,18 @@ mod test {
     #[tokio::test]
     async fn consume_should_extract_issuer() {
         let leaf_input = include_str!("../resources/test/leaf_input_with_cert").trim();
-        let mut consumer = init_consumer_with(leaf_input).await;
+        let chunk = LogsChunk {
+            logs: Logs {
+                entries: vec![LogEntry {
+                    leaf_input: leaf_input.to_owned(),
+                    extra_data: "".to_owned(),
+                }],
+            },
+            position: 0,
+        };
+        let stream = stream::iter(iter::once(Ok(chunk))).boxed_local();
         let mut buf: Vec<u8> = Vec::new();
-        let result = consumer.consume(Cursor::new(&mut buf)).await;
+        let result = consume(stream, Cursor::new(&mut buf)).await;
         let info = serde_json::from_slice::<CertInfo>(&buf).unwrap();
         assert!(result.is_ok());
         assert_eq!(info.issuer, "C=US, O=GeoTrust Inc., CN=RapidSSL SHA256 CA");
@@ -176,28 +193,18 @@ mod test {
     #[tokio::test]
     async fn consume_should_error_if_base64_decode_fails() {
         let leaf_input = "#";
-        let mut consumer = init_consumer_with(leaf_input).await;
+        let chunk = LogsChunk {
+            logs: Logs {
+                entries: vec![LogEntry {
+                    leaf_input: leaf_input.to_owned(),
+                    extra_data: "".to_owned(),
+                }],
+            },
+            position: 0,
+        };
+        let stream = stream::iter(iter::once(Ok(chunk))).boxed_local();
         let mut buf: Vec<u8> = Vec::new();
-        let result = consumer.consume(Cursor::new(&mut buf)).await;
+        let result = consume(stream, Cursor::new(&mut buf)).await;
         assert!(result.is_err());
-    }
-
-    async fn init_consumer_with(cert: &str) -> Consumer {
-        let (mut logs_tx, logs_rx) = mpsc::channel(10);
-        let consumer = Consumer::new(logs_rx);
-        logs_tx
-            .send(LogsChunk {
-                logs: Logs {
-                    entries: vec![LogEntry {
-                        leaf_input: cert.to_owned(),
-                        extra_data: "".to_owned(),
-                    }],
-                },
-                position: 0,
-            })
-            .await
-            .unwrap();
-        drop(logs_tx);
-        consumer
     }
 }

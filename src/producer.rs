@@ -1,8 +1,14 @@
 use crate::client::{CtClient, Logs};
-use futures::{stream::FuturesUnordered, StreamExt};
+use futures::{stream, Stream, StreamExt, TryStreamExt};
 use serde::{Deserialize, Serialize};
-use std::{error::Error, sync::Arc};
-use tokio::{sync::mpsc, sync::oneshot};
+use std::{
+    error::Error,
+    pin::Pin,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+};
 
 const RETRIEVAL_LIMIT: usize = 32;
 
@@ -18,74 +24,58 @@ impl LogsChunk {
     }
 }
 
-pub struct Producer {
-    client: Arc<Box<dyn CtClient>>,
-    logs_tx: mpsc::Sender<LogsChunk>,
-    sigint_rx: oneshot::Receiver<()>,
-}
+const CONCURRENCY_LEVEL: usize = 12;
 
-impl Producer {
-    pub fn new(
-        client: Box<dyn CtClient>,
-        logs_tx: mpsc::Sender<LogsChunk>,
-        sigint_rx: oneshot::Receiver<()>,
-    ) -> Self {
-        Self {
-            client: Arc::new(client),
-            logs_tx,
-            sigint_rx,
-        }
-    }
-
-    pub async fn produce(mut self) -> Result<(), Box<dyn Error>> {
-        let tree_size = self.client.get_tree_size().await?;
-        let (mut div, rem) = (tree_size / RETRIEVAL_LIMIT, tree_size % RETRIEVAL_LIMIT);
-        let mut start = 0;
-        let mut end = start + RETRIEVAL_LIMIT - 1;
-        let mut queue = FuturesUnordered::new();
-        let mut interrupted = false;
-        while div != 0 {
-            if self.sigint_rx.try_recv().is_ok() {
-                interrupted = true;
-                break;
-            }
-            let c = self.client.clone();
-            queue.push(async move {
+pub fn produce(
+    client: impl CtClient + Clone + Send + Sync + 'static,
+    tree_size: usize,
+    sigint: Arc<AtomicBool>,
+) -> Pin<Box<dyn Stream<Item = Result<LogsChunk, Box<dyn Error>>>>> {
+    stream::iter(gen_iterator(tree_size))
+        .map_ok(move |(start, end)| {
+            let c = client.clone();
+            let s = sigint.clone();
+            async move {
+                if s.load(Ordering::SeqCst) {
+                    return Err("SIGINT received".into());
+                }
                 let logs = c.get_entries(start, end).await?;
                 Ok::<LogsChunk, Box<dyn Error>>(LogsChunk::new(logs, start))
-            });
-            if queue.len() == 12 {
-                while let Some(Ok(chunk)) = queue.next().await {
-                    self.logs_tx.send(chunk).await?;
-                }
             }
-            start += RETRIEVAL_LIMIT;
-            end = start + RETRIEVAL_LIMIT - 1;
-            div -= 1;
-        }
-        while let Some(Ok(chunk)) = queue.next().await {
-            self.logs_tx.send(chunk).await?;
-        }
-        if !interrupted && rem != 0 {
-            let logs = self.client.get_entries(start, start + rem - 1).await?;
-            self.logs_tx.send(LogsChunk::new(logs, start)).await?;
-        }
-        Ok(())
-    }
+        })
+        .try_buffer_unordered(CONCURRENCY_LEVEL)
+        .boxed()
+}
+
+fn gen_iterator(tree_size: usize) -> impl Iterator<Item = Result<(usize, usize), Box<dyn Error>>> {
+    let (num_iterations, rem) = (tree_size / RETRIEVAL_LIMIT, tree_size % RETRIEVAL_LIMIT);
+    (0..=num_iterations).map(move |iteration| {
+        let start = iteration * RETRIEVAL_LIMIT;
+        let end = if iteration == num_iterations {
+            start + rem - 1
+        } else {
+            start + RETRIEVAL_LIMIT - 1
+        };
+        Ok((start, end))
+    })
 }
 
 #[cfg(test)]
 mod test {
-    use super::Producer;
+    use super::produce;
     use crate::client::{CtClient, LogEntry, Logs};
     use async_trait::async_trait;
+    use futures::StreamExt;
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    };
     use tokio::{
         self,
-        sync::{mpsc, oneshot},
         time::{timeout_at, Duration, Instant},
     };
 
-    #[derive(Default)]
+    #[derive(Clone, Default)]
     struct FakeCtClient {
         tree_size: usize,
     }
@@ -115,35 +105,38 @@ mod test {
 
     #[tokio::test]
     async fn producer_should_gracefully_shutdown_on_receiving_sigint() {
+        let sigint = Arc::new(AtomicBool::new(false));
         let tree_size = 2341;
-        let client = Box::new(FakeCtClient { tree_size });
-        let (logs_tx, _) = mpsc::channel(100);
-        let (sigint_tx, sigint_rx) = oneshot::channel();
-        let handle = Producer::new(client, logs_tx, sigint_rx).produce();
-        sigint_tx.send(()).unwrap();
-        if let Err(_) = timeout_at(Instant::now() + Duration::from_millis(10), handle).await {
+        let client = FakeCtClient { tree_size };
+        let stream = produce(client, tree_size, sigint.clone());
+        sigint.store(true, Ordering::SeqCst);
+        let result = timeout_at(
+            Instant::now() + Duration::from_millis(10),
+            stream.into_future(),
+        )
+        .await;
+        if result.is_err() {
             assert!(false, "Did not handle signal in 10ms!")
         }
     }
 
     #[tokio::test]
     async fn producer_should_return_all_logs_with_position() {
+        let sigint = Arc::new(AtomicBool::new(false));
         let tree_size = 2341;
-        let client = Box::new(FakeCtClient { tree_size });
-        let (logs_tx, mut logs_rx) = mpsc::channel(100);
-        let (_sigint_tx, sigint_rx) = oneshot::channel();
-        Producer::new(client, logs_tx, sigint_rx)
-            .produce()
-            .await
-            .unwrap();
-        let mut count = 0;
+        let client = FakeCtClient { tree_size };
+        let mut stream = produce(client, tree_size, sigint);
         let mut position = 0;
-        while let Some(chunk) = logs_rx.recv().await {
+        let mut logs = Vec::new();
+        while let Some(chunk) = stream.next().await {
+            logs.push(chunk.unwrap());
+        }
+        logs.sort_by(|a, b| a.position.cmp(&b.position));
+        for chunk in logs {
             let len = chunk.logs.entries.len();
-            count += len;
             assert_eq!(chunk.position, position);
             position += len;
         }
-        assert_eq!(count, tree_size)
+        assert_eq!(position, tree_size)
     }
 }

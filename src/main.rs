@@ -3,12 +3,18 @@ mod consumer;
 pub mod parser;
 pub mod producer;
 
-use client::HttpCtClient;
-use consumer::Consumer;
-use producer::Producer;
-use std::error::Error;
+use client::{CtClient, HttpCtClient};
+use consumer::consume;
+use producer::produce;
+use std::{
+    error::Error,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+};
 use tokio::signal::unix::{signal, SignalKind};
-use tokio::{fs::OpenOptions, sync::mpsc, sync::oneshot, try_join};
+use tokio::{fs::OpenOptions, try_join};
 
 const CT_LOGS_URL: &str = "https://ct.googleapis.com/aviator/ct/v1";
 
@@ -20,27 +26,21 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .write(true)
         .open("logs")
         .await?;
-    let (sigint_tx, sigint_rx) = oneshot::channel();
-    let client = Box::new(HttpCtClient::new(CT_LOGS_URL));
-    let (tx, rx) = mpsc::channel(2000);
-    let producer = Producer::new(client, tx, sigint_rx);
-    let mut consumer = Consumer::new(rx);
-    match try_join!(
-        producer.produce(),
-        consumer.consume(writer),
-        signal_handler(sigint_tx)
-    ) {
-        Ok((_, _, _)) => Ok(()),
-        errs => Err(format!("Error occurred: {:#?}", errs).into()),
+    let client = HttpCtClient::new(CT_LOGS_URL);
+    let sigint = AtomicBool::new(false);
+    let sigint = Arc::new(sigint);
+    let tree_size = client.get_tree_size().await?;
+    let stream = produce(client, tree_size, sigint.clone());
+    match try_join!(consume(stream, writer), signal_handler(sigint.clone())) {
+        Ok(((), ())) => Ok(()),
+        errs => Err(format!("{:?}", errs).into()),
     }
 }
 
-async fn signal_handler(signal_tx: oneshot::Sender<()>) -> Result<(), Box<dyn Error>> {
-    let mut sigint = signal(SignalKind::interrupt())?;
-    sigint.recv().await;
-    signal_tx
-        .send(())
-        .map_err(|_| "Failed to propagate sigint to other tasks!")?;
+async fn signal_handler(sigint: Arc<AtomicBool>) -> Result<(), Box<dyn Error>> {
+    let mut signal = signal(SignalKind::interrupt())?;
+    signal.recv().await;
+    sigint.swap(true, Ordering::SeqCst);
     eprintln!("Attempting to gracefully let tasks complete.");
     Ok(())
 }

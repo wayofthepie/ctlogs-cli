@@ -43,18 +43,16 @@ pub trait CtClient {
     async fn get_tree_size(&self) -> Result<usize, Box<dyn Error>>;
 }
 
-pub struct HttpCtClient {
-    base_url: String,
+#[derive(Clone)]
+pub struct HttpCtClient<'a> {
+    base_url: &'a str,
     client: Client,
 }
 
-impl HttpCtClient {
-    pub fn new<S: Into<String>>(base_url: S) -> Self {
+impl<'a> HttpCtClient<'a> {
+    pub fn new(base_url: &'a str) -> Self {
         let client = Client::new();
-        Self {
-            base_url: base_url.into(),
-            client,
-        }
+        Self { base_url, client }
     }
 }
 
@@ -67,7 +65,7 @@ const REQUEST_CLONE_ERROR: &str =
     "An error occurred cloning the client request, this should not happen.";
 const RETRY_LIMIT: u64 = 3;
 
-impl HttpCtClient {
+impl<'a> HttpCtClient<'a> {
     async fn request(&self, request: Request) -> Result<reqwest::Response, Box<dyn Error>> {
         let mut count = 1;
         loop {
@@ -102,7 +100,7 @@ impl HttpCtClient {
 }
 
 #[async_trait]
-impl CtClient for HttpCtClient {
+impl<'a> CtClient for HttpCtClient<'a> {
     async fn get_entries(&self, start: usize, end: usize) -> Result<Logs, Box<dyn Error>> {
         let response = self
             .request(
@@ -158,7 +156,8 @@ mod test {
             .expect(3)
             .mount(&mock_server)
             .await;
-        let client = HttpCtClient::new(mock_server.uri().to_string());
+        let uri = &mock_server.uri();
+        let client = HttpCtClient::new(uri);
         let result = client.get_entries(0, 1).await;
         assert!(result.is_err());
     }
@@ -174,7 +173,8 @@ mod test {
             .expect(3)
             .mount(&mock_server)
             .await;
-        let client = HttpCtClient::new(mock_server.uri().to_string());
+        let uri = &mock_server.uri();
+        let client = HttpCtClient::new(uri);
         let result = client.get_tree_size().await;
         assert!(result.is_err());
     }
@@ -188,8 +188,8 @@ mod test {
             .respond_with(ResponseTemplate::new(400).set_body_string(server_error))
             .mount(&mock_server)
             .await;
-
-        let client = HttpCtClient::new(mock_server.uri().to_string());
+        let uri = &mock_server.uri();
+        let client = HttpCtClient::new(uri);
         let result = client.get_tree_size().await;
         assert!(result.is_err());
         assert_eq!(
@@ -209,7 +209,8 @@ mod test {
             }))
             .mount(&mock_server)
             .await;
-        let client = HttpCtClient::new(mock_server.uri().to_string());
+        let uri = &mock_server.uri();
+        let client = HttpCtClient::new(uri);
         let result = client.get_tree_size().await;
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), expected_size);
@@ -226,7 +227,8 @@ mod test {
             .respond_with(ResponseTemplate::new(400).set_body_string(server_error))
             .mount(&mock_server)
             .await;
-        let client = HttpCtClient::new(mock_server.uri().to_string());
+        let uri = &mock_server.uri();
+        let client = HttpCtClient::new(uri);
         let result = client.get_entries(0, 1).await;
         assert!(result.is_err());
         assert_eq!(
@@ -244,7 +246,8 @@ mod test {
             .respond_with(ResponseTemplate::new(200).set_body_json(&body))
             .mount(&mock_server)
             .await;
-        let client = HttpCtClient::new(mock_server.uri().to_string());
+        let uri = &mock_server.uri();
+        let client = HttpCtClient::new(uri);
         let result = client.get_entries(0, 1).await;
         assert!(result.is_err());
     }
@@ -265,7 +268,8 @@ mod test {
             .respond_with(ResponseTemplate::new(200).set_body_json(&body))
             .mount(&mock_server)
             .await;
-        let client = HttpCtClient::new(mock_server.uri().to_string());
+        let uri = &mock_server.uri();
+        let client = HttpCtClient::new(uri);
         let result = client.get_entries(0, 1).await;
         assert!(result.is_err());
         assert_eq!(
@@ -296,7 +300,8 @@ mod test {
             .respond_with(ResponseTemplate::new(200).set_body_json(&body))
             .mount(&mock_server)
             .await;
-        let client = HttpCtClient::new(mock_server.uri().to_string());
+        let uri = &mock_server.uri();
+        let client = HttpCtClient::new(uri);
         let result = client.get_entries(0, 1).await;
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), body);
