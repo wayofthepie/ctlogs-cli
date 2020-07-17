@@ -12,7 +12,7 @@ openssl req \
     -nodes \
     -keyout $key \
     -out $certname \
-    -subj '/CN=ctlogs-test' \
+    -subj '/C=IE/O=nocht/CN=ctlogs-test' \
     -extensions san \
     -config $config
 
