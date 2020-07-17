@@ -7,14 +7,14 @@ use std::{
 use x509_parser::{
     extensions::{GeneralName, ParsedExtension, SubjectAlternativeName},
     objects::oid2sn,
-    AttributeTypeAndValue, TbsCertificate,
+    AttributeTypeAndValue, TbsCertificate, X509Name,
 };
 
 #[derive(Default, Debug, Deserialize, Serialize)]
 pub struct CertInfo {
     pub position: usize,
     pub issuer: Vec<NamePart>,
-    pub subject: String,
+    pub subject: Vec<NamePart>,
     pub san: Vec<SanObject>,
     pub cert: String,
 }
@@ -68,13 +68,8 @@ pub fn parse_x509_bytes(bytes: &[u8], position: usize) -> Result<CertInfo, Box<d
 fn extract_cert_info(cert: TbsCertificate, position: usize) -> Result<CertInfo, Box<dyn Error>> {
     let mut cert_info = CertInfo::default();
     cert_info.position = position;
-    cert_info.issuer = cert
-        .issuer
-        .rdn_seq
-        .into_iter()
-        .flat_map(|rdn| rdn.set.into_iter().map(attrribute_to_name_part))
-        .collect::<Vec<NamePart>>();
-    cert_info.subject = cert.subject.to_string();
+    cert_info.issuer = x509_name_to_name_parts(cert.issuer);
+    cert_info.subject = x509_name_to_name_parts(cert.subject);
     cert_info.san = cert
         .extensions
         .into_iter()
@@ -85,6 +80,13 @@ fn extract_cert_info(cert: TbsCertificate, position: usize) -> Result<CertInfo, 
         .flatten()
         .collect();
     Ok(cert_info)
+}
+
+fn x509_name_to_name_parts(name: X509Name) -> Vec<NamePart> {
+    name.rdn_seq
+        .into_iter()
+        .flat_map(|rdn| rdn.set.into_iter().map(attrribute_to_name_part))
+        .collect::<Vec<NamePart>>()
 }
 
 fn attrribute_to_name_part(attr: AttributeTypeAndValue) -> NamePart {
@@ -153,6 +155,30 @@ fn bytes_to_san_ip(bytes: &[u8]) -> SanObject {
 #[cfg(test)]
 mod test {
     use super::{parse_x509_bytes, NamePart, OtherName, SanObject};
+
+    #[tokio::test]
+    async fn parse_x509_bytes_should_decode_subject_into_attribute_value_pairs() {
+        let common_name = NamePart {
+            tag: "CN".to_owned(),
+            value: "ctlogs-test".to_owned(),
+        };
+        let country = NamePart {
+            tag: "C".to_owned(),
+            value: "IE".to_owned(),
+        };
+        let org = NamePart {
+            tag: "O".to_owned(),
+            value: "nocht".to_owned(),
+        };
+        let cert = include_str!("../resources/test/cert__issuer_with_multipart_rdn.crt").trim();
+        let bytes = base64::decode(cert).unwrap();
+        let result = parse_x509_bytes(&bytes, 0);
+        assert!(result.is_ok());
+        let info = result.unwrap();
+        assert!(info.subject.contains(&common_name));
+        assert!(info.subject.contains(&country));
+        assert!(info.subject.contains(&org));
+    }
 
     #[tokio::test]
     async fn parse_x509_bytes_should_decode_issuer_into_attribute_value_pairs() {
