@@ -1,3 +1,4 @@
+use der_parser::ber::BerObjectContent::{IA5String, PrintableString, UTF8String};
 use serde::{Deserialize, Serialize};
 use std::{
     error::Error,
@@ -5,13 +6,14 @@ use std::{
 };
 use x509_parser::{
     extensions::{GeneralName, ParsedExtension, SubjectAlternativeName},
-    TbsCertificate,
+    objects::oid2sn,
+    AttributeTypeAndValue, TbsCertificate,
 };
 
 #[derive(Default, Debug, Deserialize, Serialize)]
 pub struct CertInfo {
     pub position: usize,
-    pub issuer: String,
+    pub issuer: Vec<NamePart>,
     pub subject: String,
     pub san: Vec<SanObject>,
     pub cert: String,
@@ -66,7 +68,12 @@ pub fn parse_x509_bytes(bytes: &[u8], position: usize) -> Result<CertInfo, Box<d
 fn extract_cert_info(cert: TbsCertificate, position: usize) -> Result<CertInfo, Box<dyn Error>> {
     let mut cert_info = CertInfo::default();
     cert_info.position = position;
-    cert_info.issuer = cert.issuer.to_string();
+    cert_info.issuer = cert
+        .issuer
+        .rdn_seq
+        .into_iter()
+        .flat_map(|rdn| rdn.set.into_iter().map(attrribute_to_name_part))
+        .collect::<Vec<NamePart>>();
     cert_info.subject = cert.subject.to_string();
     cert_info.san = cert
         .extensions
@@ -78,6 +85,30 @@ fn extract_cert_info(cert: TbsCertificate, position: usize) -> Result<CertInfo, 
         .flatten()
         .collect();
     Ok(cert_info)
+}
+
+fn attrribute_to_name_part(attr: AttributeTypeAndValue) -> NamePart {
+    let AttributeTypeAndValue {
+        attr_type,
+        attr_value,
+    } = attr;
+    let sn = match oid2sn(&attr_type) {
+        Ok(sn) => sn.to_owned(),
+        Err(_) => attr_type.to_id_string(),
+    };
+    let value = match attr_value.content {
+        UTF8String(value) => value,
+        PrintableString(value) => value,
+        IA5String(value) => value,
+        _ => {
+            eprintln!("Found unknown attribute value type {:?}", attr_value);
+            ""
+        }
+    };
+    NamePart {
+        tag: sn,
+        value: value.to_owned(),
+    }
 }
 
 fn handle_san(san: &SubjectAlternativeName) -> Vec<SanObject> {
@@ -94,6 +125,7 @@ fn handle_san(san: &SubjectAlternativeName) -> Vec<SanObject> {
         })
         .collect()
 }
+
 fn bytes_to_san_ip(bytes: &[u8]) -> SanObject {
     let len = bytes.len();
     if len == 4 {
@@ -120,7 +152,31 @@ fn bytes_to_san_ip(bytes: &[u8]) -> SanObject {
 
 #[cfg(test)]
 mod test {
-    use super::{parse_x509_bytes, OtherName, SanObject};
+    use super::{parse_x509_bytes, NamePart, OtherName, SanObject};
+
+    #[tokio::test]
+    async fn parse_x509_bytes_should_decode_issuer_into_attribute_value_pairs() {
+        let common_name = NamePart {
+            tag: "CN".to_owned(),
+            value: "ctlogs-test".to_owned(),
+        };
+        let country = NamePart {
+            tag: "C".to_owned(),
+            value: "IE".to_owned(),
+        };
+        let org = NamePart {
+            tag: "O".to_owned(),
+            value: "nocht".to_owned(),
+        };
+        let cert = include_str!("../resources/test/cert__issuer_with_multipart_rdn.crt").trim();
+        let bytes = base64::decode(cert).unwrap();
+        let result = parse_x509_bytes(&bytes, 0);
+        assert!(result.is_ok());
+        let info = result.unwrap();
+        assert!(info.issuer.contains(&common_name));
+        assert!(info.issuer.contains(&country));
+        assert!(info.issuer.contains(&org));
+    }
 
     #[tokio::test]
     async fn parse_x509_bytes_should_decode_othername_in_san_and_save_base64_encoded() {

@@ -174,26 +174,6 @@ mod test {
     }
 
     #[tokio::test]
-    async fn consume_should_extract_issuer() {
-        let leaf_input = include_str!("../resources/test/leaf_input_with_cert").trim();
-        let chunk = LogsChunk {
-            logs: Logs {
-                entries: vec![LogEntry {
-                    leaf_input: leaf_input.to_owned(),
-                    extra_data: "".to_owned(),
-                }],
-            },
-            position: 0,
-        };
-        let stream = stream::iter(iter::once(Ok(chunk))).boxed_local();
-        let mut buf: Vec<u8> = Vec::new();
-        let result = consume(stream, Cursor::new(&mut buf)).await;
-        let info = serde_json::from_slice::<CertInfo>(&buf).unwrap();
-        assert!(result.is_ok());
-        assert_eq!(info.issuer, "C=US, O=GeoTrust Inc., CN=RapidSSL SHA256 CA");
-    }
-
-    #[tokio::test]
     async fn consume_should_error_if_base64_decode_fails() {
         let leaf_input = "#";
         let chunk = LogsChunk {

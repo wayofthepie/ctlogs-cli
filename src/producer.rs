@@ -10,6 +10,7 @@ use std::{
     },
 };
 
+const CONCURRENCY_LEVEL: usize = 12;
 const RETRIEVAL_LIMIT: usize = 32;
 
 #[derive(Debug, Deserialize, Serialize, Eq, PartialEq)]
@@ -23,8 +24,6 @@ impl LogsChunk {
         Self { logs, position }
     }
 }
-
-const CONCURRENCY_LEVEL: usize = 12;
 
 pub type PinnedStream<T> = Pin<Box<dyn Stream<Item = Result<T, Box<dyn Error>>>>>;
 
