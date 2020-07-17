@@ -1,4 +1,6 @@
-use der_parser::ber::BerObjectContent::{IA5String, PrintableString, UTF8String};
+use der_parser::ber::BerObjectContent::{IA5String, PrintableString, T61String, UTF8String};
+use encoding::types::Encoding;
+use encoding::{all::ISO_8859_6, DecoderTrap};
 use serde::{Deserialize, Serialize};
 use std::{
     error::Error,
@@ -99,18 +101,22 @@ fn attrribute_to_name_part(attr: AttributeTypeAndValue) -> NamePart {
         Err(_) => attr_type.to_id_string(),
     };
     let value = match attr_value.content {
-        UTF8String(value) => value,
-        PrintableString(value) => value,
-        IA5String(value) => value,
+        UTF8String(value) => value.to_owned(),
+        PrintableString(value) => value.to_owned(),
+        IA5String(value) => value.to_owned(),
+        T61String(bytes) => match ISO_8859_6.decode(bytes, DecoderTrap::Replace) {
+            Ok(decoded) => decoded,
+            Err(_) => {
+                eprintln!("error decoding");
+                base64::encode(bytes)
+            }
+        },
         _ => {
             eprintln!("Found unknown attribute value type {:?}", attr_value);
-            ""
+            "".to_owned()
         }
     };
-    NamePart {
-        tag: sn,
-        value: value.to_owned(),
-    }
+    NamePart { tag: sn, value }
 }
 
 fn handle_san(san: &SubjectAlternativeName) -> Vec<SanObject> {
@@ -155,6 +161,20 @@ fn bytes_to_san_ip(bytes: &[u8]) -> SanObject {
 #[cfg(test)]
 mod test {
     use super::{parse_x509_bytes, NamePart, OtherName, SanObject};
+
+    #[tokio::test]
+    async fn parse_x509_bytes_should_decode_t61string_from_subject() {
+        let common_name = NamePart {
+            tag: "CN".to_owned(),
+            value: "*.ithenticate.com".to_owned(),
+        };
+        let cert = include_str!("../resources/test/cert__subject_with_t61string.crt").trim();
+        let bytes = base64::decode(cert).unwrap();
+        let result = parse_x509_bytes(&bytes, 0);
+        assert!(result.is_ok());
+        let info = result.unwrap();
+        assert!(info.subject.contains(&common_name));
+    }
 
     #[tokio::test]
     async fn parse_x509_bytes_should_decode_subject_into_attribute_value_pairs() {
