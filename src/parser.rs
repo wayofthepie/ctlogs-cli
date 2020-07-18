@@ -1,6 +1,6 @@
 use der_parser::ber::BerObjectContent::{IA5String, PrintableString, T61String, UTF8String};
 use encoding::types::Encoding;
-use encoding::{all::ISO_8859_6, DecoderTrap};
+use encoding::{all::ISO_8859_1, DecoderTrap};
 use serde::{Deserialize, Serialize};
 use std::{
     error::Error,
@@ -104,7 +104,7 @@ fn attrribute_to_name_part(attr: AttributeTypeAndValue) -> NamePart {
         UTF8String(value) => value.to_owned(),
         PrintableString(value) => value.to_owned(),
         IA5String(value) => value.to_owned(),
-        T61String(bytes) => match ISO_8859_6.decode(bytes, DecoderTrap::Replace) {
+        T61String(bytes) => match ISO_8859_1.decode(bytes, DecoderTrap::Replace) {
             Ok(decoded) => decoded,
             Err(_) => {
                 eprintln!("error decoding");
