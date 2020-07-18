@@ -1,4 +1,6 @@
-use der_parser::ber::BerObjectContent::{IA5String, PrintableString, T61String, UTF8String};
+use der_parser::ber::BerObjectContent::{
+    BmpString, IA5String, PrintableString, T61String, UTF8String,
+};
 use encoding::types::Encoding;
 use encoding::{all::ISO_8859_1, DecoderTrap};
 use serde::{Deserialize, Serialize};
@@ -70,8 +72,8 @@ pub fn parse_x509_bytes(bytes: &[u8], position: usize) -> Result<CertInfo, Box<d
 fn extract_cert_info(cert: TbsCertificate, position: usize) -> Result<CertInfo, Box<dyn Error>> {
     let mut cert_info = CertInfo::default();
     cert_info.position = position;
-    cert_info.issuer = x509_name_to_name_parts(cert.issuer);
-    cert_info.subject = x509_name_to_name_parts(cert.subject);
+    cert_info.issuer = x509_name_to_name_parts(cert.issuer, position);
+    cert_info.subject = x509_name_to_name_parts(cert.subject, position);
     cert_info.san = cert
         .extensions
         .into_iter()
@@ -84,14 +86,18 @@ fn extract_cert_info(cert: TbsCertificate, position: usize) -> Result<CertInfo, 
     Ok(cert_info)
 }
 
-fn x509_name_to_name_parts(name: X509Name) -> Vec<NamePart> {
+fn x509_name_to_name_parts(name: X509Name, position: usize) -> Vec<NamePart> {
     name.rdn_seq
         .into_iter()
-        .flat_map(|rdn| rdn.set.into_iter().map(attrribute_to_name_part))
+        .flat_map(|rdn| {
+            rdn.set
+                .into_iter()
+                .map(|a| attrribute_to_name_part(a, position))
+        })
         .collect::<Vec<NamePart>>()
 }
 
-fn attrribute_to_name_part(attr: AttributeTypeAndValue) -> NamePart {
+fn attrribute_to_name_part(attr: AttributeTypeAndValue, position: usize) -> NamePart {
     let AttributeTypeAndValue {
         attr_type,
         attr_value,
@@ -111,12 +117,24 @@ fn attrribute_to_name_part(attr: AttributeTypeAndValue) -> NamePart {
                 base64::encode(bytes)
             }
         },
+        BmpString(bytes) => decode_bmpstring(bytes),
         _ => {
-            eprintln!("Found unknown attribute value type {:?}", attr_value);
+            eprintln!(
+                "Found unknown attribute value type {:?} as position {}",
+                attr_value, position
+            );
             "".to_owned()
         }
     };
     NamePart { tag: sn, value }
+}
+
+fn decode_bmpstring(bytes: &[u8]) -> String {
+    let decoded = bytes
+        .chunks(2)
+        .map(|slice| ((slice[0] as u16) << 8) | slice[1] as u16)
+        .collect::<Vec<u16>>();
+    String::from_utf16_lossy(&decoded)
 }
 
 fn handle_san(san: &SubjectAlternativeName) -> Vec<SanObject> {
@@ -161,6 +179,20 @@ fn bytes_to_san_ip(bytes: &[u8]) -> SanObject {
 #[cfg(test)]
 mod test {
     use super::{parse_x509_bytes, NamePart, OtherName, SanObject};
+
+    #[tokio::test]
+    async fn parse_x509_bytes_should_decode_bmpstring_from_subject() {
+        let common_name = NamePart {
+            tag: "O".to_owned(),
+            value: "Bnei Baruch Association - עמותת בני ברוך".to_owned(),
+        };
+        let cert = include_str!("../resources/test/cert__subject_with_bmpstring.crt").trim();
+        let bytes = base64::decode(cert).unwrap();
+        let result = parse_x509_bytes(&bytes, 0);
+        assert!(result.is_ok());
+        let info = result.unwrap();
+        assert!(info.subject.contains(&common_name));
+    }
 
     #[tokio::test]
     async fn parse_x509_bytes_should_decode_t61string_from_subject() {
