@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use reqwest::{Client, Request, Response};
 use serde::{Deserialize, Serialize};
-use std::error::Error;
+use std::{error::Error, time::Duration};
 
 #[derive(Debug, Deserialize, Serialize, Eq, PartialEq)]
 pub struct Logs {
@@ -109,6 +109,7 @@ impl<'a> CtClient for HttpCtClient<'a> {
                         "{}/get-entries?start={}&end={}",
                         self.base_url, start, end
                     ))
+                    .timeout(Duration::from_secs(20))
                     .build()?,
             )
             .await?;
@@ -124,6 +125,7 @@ impl<'a> CtClient for HttpCtClient<'a> {
             .request(
                 self.client
                     .get(&format!("{}/get-sth", self.base_url))
+                    .timeout(Duration::from_secs(20))
                     .build()?,
             )
             .await?;
