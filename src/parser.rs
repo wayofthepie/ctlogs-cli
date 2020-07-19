@@ -110,13 +110,12 @@ fn attrribute_to_name_part(attr: AttributeTypeAndValue, position: usize) -> Name
         UTF8String(value) => value.to_owned(),
         PrintableString(value) => value.to_owned(),
         IA5String(value) => value.to_owned(),
-        T61String(bytes) => match ISO_8859_1.decode(bytes, DecoderTrap::Replace) {
-            Ok(decoded) => decoded,
-            Err(_) => {
-                eprintln!("error decoding");
+        T61String(bytes) => ISO_8859_1
+            .decode(bytes, DecoderTrap::Replace)
+            .unwrap_or_else(|_| {
+                eprintln!("error decoding t61string at position {}", position);
                 base64::encode(bytes)
-            }
-        },
+            }),
         BmpString(bytes) => decode_bmpstring(bytes),
         _ => {
             eprintln!(
