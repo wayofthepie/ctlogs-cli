@@ -132,7 +132,7 @@ fn attrribute_to_name_part(attr: AttributeTypeAndValue, position: usize) -> Name
 fn decode_bmpstring(bytes: &[u8]) -> String {
     let decoded = bytes
         .chunks(2)
-        .map(|slice| ((slice[0] as u16) << 8) | slice[1] as u16)
+        .map(|slice| u16::from_be_bytes([slice[0], slice[1]]))
         .collect::<Vec<u16>>();
     String::from_utf16_lossy(&decoded)
 }
