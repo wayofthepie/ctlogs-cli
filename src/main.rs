@@ -13,8 +13,8 @@ use std::{
         Arc,
     },
 };
+use tokio::fs::OpenOptions;
 use tokio::signal::unix::{signal, SignalKind};
-use tokio::{fs::OpenOptions, try_join};
 
 const CT_LOGS_URL: &str = "https://ct.googleapis.com/aviator/ct/v1";
 
@@ -31,13 +31,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let sigint = Arc::new(sigint);
     let tree_size = client.get_tree_size().await?;
     let stream = produce(client, tree_size, sigint.clone());
-    match try_join!(consume(stream, writer), signal_handler(sigint.clone())) {
-        Ok(((), ())) => Ok(()),
-        errs => Err(format!("{:?}", errs).into()),
-    }
+    tokio::spawn(signal_handler(sigint.clone()));
+    consume(stream, writer).await
 }
 
-async fn signal_handler(sigint: Arc<AtomicBool>) -> Result<(), Box<dyn Error>> {
+async fn signal_handler(sigint: Arc<AtomicBool>) -> Result<(), Box<dyn Error + Send + Sync>> {
     let mut signal = signal(SignalKind::interrupt())?;
     signal.recv().await;
     sigint.swap(true, Ordering::SeqCst);
