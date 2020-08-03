@@ -1951,9 +1951,9 @@ dependencies = [
 
 [[package]]
 name = "wiremock"
-version = "0.2.3"
+version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "261a7e6edac66d1afad5ef5d9a270c334da73d4732840542f7c975a45e2712a7"
+checksum = "435750778f329f9a99900cf11cb398f5d6f0c5ed18236032088acb0f033618ab"
 dependencies = [
  "async-h1",
  "async-std",

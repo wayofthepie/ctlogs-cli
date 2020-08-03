@@ -20,4 +20,4 @@ tokio = { version = "0.2.22", features = [ "macros", "sync", "fs", "time", "sign
 x509-parser = { git = "https://github.com/wayofthepie/x509-parser.git", branch = "aia-update" }
 
 [dev-dependencies]
-wiremock = "0.2.3"
+wiremock = "0.2.4"
