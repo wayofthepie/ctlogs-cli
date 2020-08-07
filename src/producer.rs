@@ -29,10 +29,11 @@ pub type PinnedStream<T> = Pin<Box<dyn Stream<Item = Result<T, Box<dyn Error>>>>
 
 pub fn produce(
     client: impl CtClient + Clone + Send + Sync + 'static,
+    seen: usize,
     tree_size: usize,
     sigint: Arc<AtomicBool>,
 ) -> PinnedStream<LogsChunk> {
-    stream::iter(gen_iterator(tree_size))
+    stream::iter(gen_iterator(seen, tree_size))
         .map_ok(move |(start, end)| {
             let c = client.clone();
             let s = sigint.clone();
@@ -48,10 +49,14 @@ pub fn produce(
         .boxed()
 }
 
-fn gen_iterator(tree_size: usize) -> impl Iterator<Item = Result<(usize, usize), Box<dyn Error>>> {
-    let (num_iterations, rem) = (tree_size / RETRIEVAL_LIMIT, tree_size % RETRIEVAL_LIMIT);
+fn gen_iterator(
+    seen: usize,
+    tree_size: usize,
+) -> impl Iterator<Item = Result<(usize, usize), Box<dyn Error>>> {
+    let remaining = tree_size - seen;
+    let (num_iterations, rem) = (remaining / RETRIEVAL_LIMIT, remaining % RETRIEVAL_LIMIT);
     (0..=num_iterations).map(move |iteration| {
-        let start = iteration * RETRIEVAL_LIMIT;
+        let start = iteration * RETRIEVAL_LIMIT + seen;
         let end = if iteration == num_iterations {
             start + rem - 1
         } else {
@@ -105,11 +110,31 @@ mod test {
     }
 
     #[tokio::test]
+    async fn producer_should_start_at_given_position() {
+        let sigint = Arc::new(AtomicBool::new(false));
+        let tree_size = 2341;
+        let client = FakeCtClient { tree_size };
+        let mut stream = produce(client, 10, tree_size, sigint.clone());
+        let mut position = 10;
+        let mut logs = Vec::new();
+        while let Some(chunk) = stream.next().await {
+            logs.push(chunk.unwrap());
+        }
+        logs.sort_by(|a, b| a.position.cmp(&b.position));
+        for chunk in logs {
+            let len = chunk.logs.entries.len();
+            println!("{:#?} p {}", chunk.position, position);
+            assert_eq!(chunk.position, position);
+            position += len;
+        }
+    }
+
+    #[tokio::test]
     async fn producer_should_gracefully_shutdown_on_receiving_sigint() {
         let sigint = Arc::new(AtomicBool::new(false));
         let tree_size = 2341;
         let client = FakeCtClient { tree_size };
-        let stream = produce(client, tree_size, sigint.clone());
+        let stream = produce(client, 0, tree_size, sigint.clone());
         sigint.store(true, Ordering::SeqCst);
         let result = timeout_at(
             Instant::now() + Duration::from_millis(10),
@@ -126,7 +151,7 @@ mod test {
         let sigint = Arc::new(AtomicBool::new(false));
         let tree_size = 2341;
         let client = FakeCtClient { tree_size };
-        let mut stream = produce(client, tree_size, sigint);
+        let mut stream = produce(client, 0, tree_size, sigint);
         let mut position = 0;
         let mut logs = Vec::new();
         while let Some(chunk) = stream.next().await {
