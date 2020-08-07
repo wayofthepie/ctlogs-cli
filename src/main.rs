@@ -16,7 +16,6 @@ use std::{
     },
 };
 use structopt::StructOpt;
-use tokio::fs::OpenOptions;
 use tokio::signal::unix::{signal, SignalKind};
 
 const CT_LOGS_URL: &str = "https://ct.googleapis.com/logs/argon2020/ct/v1";
@@ -29,7 +28,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let sigint = AtomicBool::new(false);
     let sigint = Arc::new(sigint);
     let tree_size = client.get_tree_size().await?;
-    let stream = produce(client, tree_size, sigint.clone());
+    let stream = produce(client, config.start, tree_size, sigint.clone());
     tokio::spawn(signal_handler(sigint.clone()));
     consume(stream, config.writer).await
 }
