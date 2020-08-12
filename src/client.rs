@@ -113,9 +113,12 @@ impl<'a> CtClient for HttpCtClient<'a> {
                     .build()?,
             )
             .await?;
-        let logs = response.json::<Logs>().await?;
-        if logs.entries.len() < (end - start + 1) {
-            return Err("Number of logs retrieved is incorrect".into());
+        let mut logs = response.json::<Logs>().await?;
+        while logs.entries.len() < end - start + 1 {
+            let len = logs.entries.len();
+            let new_start = start + len;
+            let next = self.get_entries(new_start, end).await?;
+            logs.entries.extend(next.entries);
         }
         Ok(logs)
     }
