@@ -5,9 +5,20 @@ use crate::{
 use futures::StreamExt;
 use parser::{EntryType, PreCertMarker};
 use std::error::Error;
-use tokio::io::{AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncWrite, AsyncWriteExt, BufWriter};
 
 pub async fn consume(
+    stream: PinnedStream<LogsChunk>,
+    writer: impl AsyncWrite + Unpin + Send,
+) -> Result<(), Box<dyn Error>> {
+    let mut writer = BufWriter::new(writer);
+    let result = parse_stream(stream, &mut writer).await;
+    println!("shutting down gracefully");
+    writer.shutdown().await?;
+    result
+}
+
+async fn parse_stream(
     mut stream: PinnedStream<LogsChunk>,
     mut writer: impl AsyncWrite + Unpin + Send,
 ) -> Result<(), Box<dyn Error>> {
@@ -35,8 +46,6 @@ pub async fn consume(
             position += 1;
         }
     }
-
-    writer.shutdown().await?;
     Ok(())
 }
 
