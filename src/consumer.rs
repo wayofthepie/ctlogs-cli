@@ -7,7 +7,7 @@ use std::error::Error;
 use tokio::io::{AsyncWrite, AsyncWriteExt, BufWriter};
 
 pub async fn consume(
-    mut stream: PinnedStream<LogsChunk>,
+    stream: PinnedStream<LogsChunk>,
     writer: impl AsyncWrite + Unpin + Send,
 ) -> Result<(), Box<dyn Error>> {
     let mut writer = BufWriter::new(writer);

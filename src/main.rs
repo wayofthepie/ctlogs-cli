@@ -4,7 +4,7 @@ mod consumer;
 pub mod parser;
 pub mod producer;
 
-use cli::{Fs, Opt};
+use cli::Opt;
 use client::{CtClient, HttpCtClient};
 use consumer::consume;
 use producer::produce;
@@ -22,8 +22,7 @@ const CT_LOGS_URL: &str = "https://ct.googleapis.com/logs/argon2020/ct/v1";
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    let fs = Fs;
-    let config = Opt::from_args().handle(fs).await?;
+    let config = Opt::from_args().handle().await?;
     let client = HttpCtClient::new(CT_LOGS_URL);
     let sigint = AtomicBool::new(false);
     let sigint = Arc::new(sigint);
