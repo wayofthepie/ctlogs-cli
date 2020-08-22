@@ -1,5 +1,6 @@
 use async_trait::async_trait;
-use reqwest::{Client, Request, Response};
+use http::StatusCode;
+use reqwest::{Client, Request};
 use serde::{Deserialize, Serialize};
 use std::{error::Error, time::Duration};
 
@@ -56,46 +57,17 @@ impl<'a> HttpCtClient<'a> {
     }
 }
 
-#[cfg(test)]
-const TIMEOUT_MS: u64 = 1;
-
-#[cfg(not(test))]
-const TIMEOUT_MS: u64 = 2000;
 const REQUEST_CLONE_ERROR: &str =
     "An error occurred cloning the client request, this should not happen.";
-const RETRY_LIMIT: u64 = 3;
 
 impl<'a> HttpCtClient<'a> {
     async fn request(&self, request: Request) -> Result<reqwest::Response, Box<dyn Error>> {
-        let mut count = 1;
-        loop {
-            let request = request.try_clone().ok_or(REQUEST_CLONE_ERROR)?;
-            let response = self.client.execute(request).await?;
-            match response.status() {
-                http::status::StatusCode::OK => return Ok(response),
-                _ => {
-                    self.handle_error(response, count).await?;
-                    count += 1;
-                }
-            };
+        let request = request.try_clone().ok_or(REQUEST_CLONE_ERROR)?;
+        let response = self.client.execute(request).await?;
+        match response.status() {
+            StatusCode::OK => Ok(response),
+            _ => Err("Did not receive a 200 OK response, bailing out.".into()),
         }
-    }
-
-    async fn handle_error(&self, response: Response, count: u64) -> Result<(), Box<dyn Error>> {
-        let body = response
-            .text()
-            .await
-            .map_or_else(|_| "unknown".into(), |body| body);
-        let delay = TIMEOUT_MS * count;
-        eprintln!(
-            "Retrying in {}ms because an error occurred: {}",
-            delay, body
-        );
-        tokio::time::delay_for(tokio::time::Duration::from_millis(delay)).await;
-        if count == RETRY_LIMIT {
-            return Err(format!("An error occurred: {}", body).into());
-        }
-        Ok(())
     }
 }
 
@@ -140,7 +112,6 @@ impl<'a> CtClient for HttpCtClient<'a> {
 mod test {
     use super::{Logs, STH};
     use crate::client::{CtClient, HttpCtClient, LogEntry};
-    use tokio;
     use wiremock::{
         matchers::{method, path, query_param},
         Mock, MockServer, ResponseTemplate,
@@ -149,48 +120,11 @@ mod test {
     const LEAF_INPUT: &str = include_str!("../resources/test/leaf_input_with_cert");
 
     #[tokio::test]
-    async fn get_entries_should_retry_three_times_if_it_fails() {
-        let server_error = "oh no, sth retrieval error";
-        let mock_server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .and(path("/get-entries"))
-            .and(query_param("start", "0"))
-            .and(query_param("end", "1"))
-            .respond_with(ResponseTemplate::new(400).set_body_string(server_error))
-            .up_to_n_times(3)
-            .expect(3)
-            .mount(&mock_server)
-            .await;
-        let uri = &mock_server.uri();
-        let client = HttpCtClient::new(uri);
-        let result = client.get_entries(0, 1).await;
-        assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn get_num_entries_should_retry_three_times_if_it_fails() {
-        let server_error = "oh no, sth retrieval error";
-        let mock_server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .and(path("/get-sth"))
-            .respond_with(ResponseTemplate::new(400).set_body_string(server_error))
-            .up_to_n_times(3)
-            .expect(3)
-            .mount(&mock_server)
-            .await;
-        let uri = &mock_server.uri();
-        let client = HttpCtClient::new(uri);
-        let result = client.get_tree_size().await;
-        assert!(result.is_err());
-    }
-
-    #[tokio::test]
     async fn get_num_entries_should_fail_if_api_call_fails() {
-        let server_error = "oh no, sth retrieval error";
         let mock_server = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/get-sth"))
-            .respond_with(ResponseTemplate::new(400).set_body_string(server_error))
+            .respond_with(ResponseTemplate::new(400))
             .mount(&mock_server)
             .await;
         let uri = &mock_server.uri();
@@ -199,7 +133,7 @@ mod test {
         assert!(result.is_err());
         assert_eq!(
             result.err().unwrap().to_string(),
-            format!("An error occurred: {}", server_error)
+            "Did not receive a 200 OK response, bailing out."
         );
     }
 
@@ -223,13 +157,12 @@ mod test {
 
     #[tokio::test]
     async fn get_entries_should_fail_if_log_retrieval_fails() {
-        let server_error = "oh no";
         let mock_server = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/get-entries"))
             .and(query_param("start", "0"))
             .and(query_param("end", "1"))
-            .respond_with(ResponseTemplate::new(400).set_body_string(server_error))
+            .respond_with(ResponseTemplate::new(400))
             .mount(&mock_server)
             .await;
         let uri = &mock_server.uri();
@@ -238,7 +171,7 @@ mod test {
         assert!(result.is_err());
         assert_eq!(
             result.err().unwrap().to_string(),
-            format!("An error occurred: {}", server_error)
+            "Did not receive a 200 OK response, bailing out.",
         );
     }
 
@@ -255,32 +188,6 @@ mod test {
         let client = HttpCtClient::new(uri);
         let result = client.get_entries(0, 1).await;
         assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn get_entries_should_error_if_requested_number_of_logs_does_not_match_actual() {
-        let body = Logs {
-            entries: vec![LogEntry {
-                leaf_input: LEAF_INPUT.to_owned(),
-                extra_data: "".to_owned(),
-            }],
-        };
-        let mock_server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .and(path("/get-entries"))
-            .and(query_param("start", "0"))
-            .and(query_param("end", "1"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(&body))
-            .mount(&mock_server)
-            .await;
-        let uri = &mock_server.uri();
-        let client = HttpCtClient::new(uri);
-        let result = client.get_entries(0, 1).await;
-        assert!(result.is_err());
-        assert_eq!(
-            format!("{}", result.err().unwrap()),
-            "Number of logs retrieved is incorrect"
-        );
     }
 
     #[tokio::test]
