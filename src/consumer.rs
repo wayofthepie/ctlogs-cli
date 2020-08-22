@@ -3,6 +3,7 @@ use crate::{
     producer::{LogsChunk, PinnedStream},
 };
 use futures::StreamExt;
+use parser::{EntryType, PreCertMarker};
 use std::error::Error;
 use tokio::io::{AsyncWrite, AsyncWriteExt};
 
@@ -16,13 +17,15 @@ pub async fn consume(
             let bytes = base64::decode(&entry.leaf_input)?;
             let entry_type = bytes[10] + bytes[11];
             if entry_type != 0 {
-                eprintln!("Found precert at position {}, ignoring.", position);
+                let bytes = serde_json::to_vec(&EntryType::PreCert(PreCertMarker { position }))?;
+                writer.write_all(&bytes).await?;
+                writer.write_all(b"\n").await?;
             } else {
                 let cert_end_index =
                     u32::from_be_bytes([0, bytes[12], bytes[13], bytes[14]]) as usize + 15;
                 match parser::parse_x509_bytes(&bytes[15..cert_end_index], position) {
                     Ok(info) => {
-                        let bytes = serde_json::to_vec(&info)?;
+                        let bytes = serde_json::to_vec(&EntryType::X509(info))?;
                         writer.write_all(&bytes).await?;
                         writer.write_all(b"\n").await?;
                     }
@@ -38,15 +41,13 @@ pub async fn consume(
 
 #[cfg(test)]
 mod test {
-    use super::consume;
+    use super::{consume, EntryType};
     use crate::{
         client::{LogEntry, Logs},
-        parser::CertInfo,
         producer::LogsChunk,
     };
     use futures::{stream, StreamExt};
     use std::{io::Cursor, iter};
-    use tokio;
 
     #[tokio::test]
     async fn consume_should_store_full_cert() {
@@ -64,14 +65,17 @@ mod test {
         let stream = stream::iter(iter::once(Ok(chunk))).boxed_local();
         let result = consume(stream, Cursor::new(&mut buf)).await;
         assert!(result.is_ok());
-        let info = serde_json::from_slice::<CertInfo>(&buf).unwrap();
+        let entry_type = serde_json::from_slice::<EntryType>(&buf).unwrap();
         let leaf_bytes = base64::decode(leaf_input.as_bytes()).unwrap();
         let start = 15;
         let length = u32::from_be_bytes([0, leaf_bytes[12], leaf_bytes[13], leaf_bytes[14]]);
         let end = start + length as usize;
         let cert_bytes = &leaf_bytes[start..end];
         let cert = base64::encode(cert_bytes);
-        assert_eq!(info.cert, cert);
+        match entry_type {
+            EntryType::X509(info) => assert_eq!(info.cert, cert),
+            _ => panic!("Wrong entry type!"),
+        }
     }
 
     #[tokio::test]
@@ -100,8 +104,11 @@ mod test {
         let mut buf: Vec<u8> = Vec::new();
         let result = consume(stream, Cursor::new(&mut buf)).await;
         assert!(result.is_ok());
-        let info = serde_json::from_slice::<CertInfo>(&buf).unwrap();
-        assert_eq!(info.position, expected_position);
+        let entry_type = serde_json::from_slice::<EntryType>(&buf).unwrap();
+        match entry_type {
+            EntryType::X509(info) => assert_eq!(info.position, expected_position),
+            _ => panic!("Wrong entry type!"),
+        }
     }
 
     #[tokio::test]
@@ -128,8 +135,11 @@ mod test {
         let result = consume(stream, Cursor::new(&mut buf)).await;
         let deserialize = serde_json::Deserializer::from_slice(&buf);
         assert!(result.is_ok());
-        for info in deserialize.into_iter::<CertInfo>() {
-            assert_eq!(info.unwrap().position, position);
+        for entry_type in deserialize.into_iter::<EntryType>() {
+            match entry_type.unwrap() {
+                EntryType::X509(info) => assert_eq!(info.position, position),
+                _ => panic!("Wrong entry type!"),
+            }
             position += 1;
         }
     }
@@ -137,6 +147,7 @@ mod test {
     #[tokio::test]
     async fn consume_should_skip_precerts() {
         let leaf_input = include_str!("../resources/test/leaf_input_with_precert").trim();
+        let expected_position = 1001;
         let chunk = LogsChunk {
             logs: Logs {
                 entries: vec![LogEntry {
@@ -144,13 +155,18 @@ mod test {
                     extra_data: "".to_owned(),
                 }],
             },
-            position: 0,
+            position: expected_position,
         };
         let stream = stream::iter(iter::once(Ok(chunk))).boxed_local();
         let mut buf: Vec<u8> = Vec::new();
         let result = consume(stream, Cursor::new(&mut buf)).await;
+        println!("{:#?}", buf);
         assert!(result.is_ok());
-        assert!(buf.is_empty());
+        let entry_type = serde_json::from_slice::<EntryType>(&buf).unwrap();
+        match entry_type {
+            EntryType::PreCert(precert) => assert_eq!(precert.position, expected_position),
+            _ => panic!("Wrong entry type!"),
+        }
     }
 
     #[tokio::test]

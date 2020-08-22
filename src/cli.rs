@@ -1,4 +1,4 @@
-use crate::parser::CertInfo;
+use crate::parser::EntryType;
 use async_trait::async_trait;
 use std::{
     error::Error,
@@ -48,9 +48,12 @@ async fn get_last_position(reader: BufReader<impl AsyncRead>) -> Result<usize, B
         .lines()
         .filter_map(Result::ok)
         .map(|line| {
-            let maybe_entry = serde_json::from_str::<CertInfo>(&line);
+            let maybe_entry = serde_json::from_str::<EntryType>(&line);
             maybe_entry
-                .map(|entry| entry.position)
+                .map(|entry_type| match entry_type {
+                    EntryType::X509(info) => info.position,
+                    EntryType::PreCert(pre_cert) => pre_cert.position,
+                })
                 .map_err(|_| "failed to parse cert info".into())
         })
         .collect::<Result<Vec<usize>, Box<dyn Error>>>()
@@ -216,8 +219,8 @@ mod test {
     async fn should_return_starting_position_as_max_position_if_file_exists_with_entries() {
         let path = PathBuf::from("logs");
         let mut existing = HashMap::new();
-        let data = r#"{"position":2, "issuer":[], "subject":[], "san":[], "cert":""}
-            {"position":4,"issuer":[], "subject":[], "san":[], "cert":"" }"#;
+        let data = r#"{"x509": {"position":2, "issuer":[], "subject":[], "san":[], "cert":""}}
+            {"pre_cert": {"position":4}}"#;
         existing.insert(path, data.to_owned());
         let fs = FakeFs::from_map(existing);
         let args = vec!["", "logs"];
@@ -229,7 +232,7 @@ mod test {
     async fn should_return_appendable_writer_if_file_exists_with_entries() {
         let path = PathBuf::from("logs");
         let mut existing = HashMap::new();
-        let data = r#"{"position":2, "issuer":[], "subject":[], "san":[], "cert":""}"#;
+        let data = r#"{"x509":{"position":2, "issuer":[], "subject":[], "san":[], "cert":""}}"#;
         existing.insert(path, data.to_owned());
         let fs = FakeFs::from_map(existing);
         let args = vec!["", "logs"];

@@ -14,6 +14,18 @@ use x509_parser::{
     AttributeTypeAndValue, TbsCertificate, X509Name,
 };
 
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EntryType {
+    X509(CertInfo),
+    PreCert(PreCertMarker),
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct PreCertMarker {
+    pub position: usize,
+}
+
 #[derive(Default, Debug, Deserialize, Serialize)]
 pub struct CertInfo {
     pub position: usize,
