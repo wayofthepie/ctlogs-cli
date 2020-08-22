@@ -1,14 +1,8 @@
 use crate::client::{CtClient, Logs};
-use futures::{stream, Stream, StreamExt, TryStreamExt};
+use futures::{stream, Future, Stream, StreamExt, TryStreamExt};
 use serde::{Deserialize, Serialize};
-use std::{
-    error::Error,
-    pin::Pin,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
-    },
-};
+use std::{error::Error, pin::Pin};
+use tokio::signal::unix::{signal, SignalKind};
 
 const CONCURRENCY_LEVEL: usize = 12;
 const RETRIEVAL_LIMIT: usize = 32;
@@ -27,24 +21,25 @@ impl LogsChunk {
 
 pub type PinnedStream<T> = Pin<Box<dyn Stream<Item = Result<T, Box<dyn Error>>>>>;
 
-pub fn produce(
+pub fn produce<F, Fut>(
     client: impl CtClient + Clone + Send + Sync + 'static,
     seen: usize,
     tree_size: usize,
-    sigint: Arc<AtomicBool>,
-) -> PinnedStream<LogsChunk> {
+    sigint_handler: F,
+) -> PinnedStream<LogsChunk>
+where
+    F: Fn() -> Fut,
+    Fut: Future<Output = Result<(), Box<dyn Error + Send + Sync>>> + Send + 'static,
+{
     stream::iter(gen_iterator(seen, tree_size))
         .map_ok(move |(start, end)| {
             let c = client.clone();
-            let s = sigint.clone();
             async move {
-                if s.load(Ordering::SeqCst) {
-                    return Err("SIGINT received".into());
-                }
                 let logs = c.get_entries(start, end).await?;
                 Ok::<LogsChunk, Box<dyn Error>>(LogsChunk::new(logs, start))
             }
         })
+        .take_until(sigint_handler())
         .try_buffer_unordered(CONCURRENCY_LEVEL)
         .boxed()
 }
@@ -66,16 +61,19 @@ fn gen_iterator(
     })
 }
 
+pub async fn sigint_handler() -> Result<(), Box<dyn Error + Send + Sync>> {
+    let mut signal = signal(SignalKind::interrupt())?;
+    signal.recv().await;
+    eprintln!("\nAttempting to gracefully let tasks complete.\n");
+    Ok(())
+}
+
 #[cfg(test)]
 mod test {
-    use super::produce;
+    use super::{produce, sigint_handler};
     use crate::client::{CtClient, LogEntry, Logs};
     use async_trait::async_trait;
-    use futures::StreamExt;
-    use std::sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
-    };
+    use futures::{future, StreamExt};
     use tokio::{
         self,
         time::{timeout_at, Duration, Instant},
@@ -111,10 +109,10 @@ mod test {
 
     #[tokio::test]
     async fn producer_should_start_at_given_position() {
-        let sigint = Arc::new(AtomicBool::new(false));
         let tree_size = 2341;
         let client = FakeCtClient { tree_size };
-        let mut stream = produce(client, 10, tree_size, sigint.clone());
+        let f = || future::ok(());
+        let mut stream = produce(client, 10, tree_size, f);
         let mut position = 10;
         let mut logs = Vec::new();
         while let Some(chunk) = stream.next().await {
@@ -131,27 +129,25 @@ mod test {
 
     #[tokio::test]
     async fn producer_should_gracefully_shutdown_on_receiving_sigint() {
-        let sigint = Arc::new(AtomicBool::new(false));
         let tree_size = 2341;
         let client = FakeCtClient { tree_size };
-        let stream = produce(client, 0, tree_size, sigint.clone());
-        sigint.store(true, Ordering::SeqCst);
+        let f = || future::ok(());
+        let stream = produce(client, 0, tree_size, f);
         let result = timeout_at(
             Instant::now() + Duration::from_millis(10),
             stream.into_future(),
         )
         .await;
         if result.is_err() {
-            assert!(false, "Did not handle signal in 10ms!")
+            panic!("Did not handle signal in 10ms!")
         }
     }
 
     #[tokio::test]
     async fn producer_should_return_all_logs_with_position() {
-        let sigint = Arc::new(AtomicBool::new(false));
         let tree_size = 2341;
         let client = FakeCtClient { tree_size };
-        let mut stream = produce(client, 0, tree_size, sigint);
+        let mut stream = produce(client, 0, tree_size, sigint_handler);
         let mut position = 0;
         let mut logs = Vec::new();
         while let Some(chunk) = stream.next().await {

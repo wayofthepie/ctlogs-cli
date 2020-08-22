@@ -35,6 +35,7 @@ pub async fn consume(
             position += 1;
         }
     }
+
     writer.shutdown().await?;
     Ok(())
 }
