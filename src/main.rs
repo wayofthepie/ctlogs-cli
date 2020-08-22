@@ -28,6 +28,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let sigint = AtomicBool::new(false);
     let sigint = Arc::new(sigint);
     let tree_size = client.get_tree_size().await?;
+    println!("Starting from position {:#?}", config.start);
     let stream = produce(client, config.start, tree_size, sigint.clone());
     tokio::spawn(signal_handler(sigint.clone()));
     consume(stream, config.writer).await
