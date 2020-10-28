@@ -16,7 +16,7 @@ http = "0.2.1"
 reqwest = { version = "0.10.8", features = [ "json", "stream" ] }
 serde = { version = "1.0.117", features = [ "derive" ] }
 serde_json = "1.0.59"
-tokio = { version = "0.2.22", features = [ "macros", "sync", "fs", "time", "signal", "io-util", "stream" ] }
+tokio = { version = "0.3.2", features = [ "macros", "sync", "fs", "time", "signal", "io-util", "stream" ] }
 x509-parser = { git = "https://github.com/wayofthepie/x509-parser.git", branch = "aia-update" }
 structopt = "0.3.20"
 
