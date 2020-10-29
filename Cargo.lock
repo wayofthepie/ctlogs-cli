@@ -2280,8 +2280,10 @@ dependencies = [
  "libc",
  "memchr",
  "mio 0.7.4",
+ "num_cpus",
  "pin-project-lite",
  "signal-hook-registry",
+ "slab",
  "tokio-macros",
  "winapi 0.3.8",
 ]
