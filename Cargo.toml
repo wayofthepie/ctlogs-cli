@@ -9,7 +9,7 @@ edition = "2018"
 [dependencies]
 async-trait = "0.1.42"
 base64 = "0.13.0"
-der-parser = "4.1.0"
+der-parser = "5.0.0"
 encoding = "0.2.33"
 futures = "0.3.8"
 http = "0.2.2"
