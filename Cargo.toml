@@ -14,7 +14,7 @@ encoding = "0.2.33"
 futures = "0.3.8"
 http = "0.2.2"
 reqwest = { version = "0.10.10", features = [ "json", "stream" ] }
-serde = { version = "1.0.118", features = [ "derive" ] }
+serde = { version = "1.0.124", features = [ "derive" ] }
 serde_json = "1.0.61"
 tokio = { version = "0.2.24", features = [ "macros", "sync", "fs", "time", "signal", "io-util", "stream" ] }
 x509-parser = { git = "https://github.com/wayofthepie/x509-parser.git", branch = "aia-update" }
