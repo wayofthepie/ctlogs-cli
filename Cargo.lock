@@ -297,6 +297,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf1de2fe8c75bc145a2f577add951f8134889b4795d47466a54a5c846d691693"
 
 [[package]]
+name = "bitvec"
+version = "0.19.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8942c8d352ae1838c9dda0b0ca2ab657696ef2232a20147cf1b30ae1a9cb4321"
+dependencies = [
+ "funty",
+ "radium",
+ "tap",
+ "wyz",
+]
+
+[[package]]
 name = "block-buffer"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -528,7 +540,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "base64 0.13.0",
- "der-parser",
+ "der-parser 5.0.1",
  "encoding",
  "futures",
  "http",
@@ -553,7 +565,19 @@ version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e66558629d772c3be040566b7be07be8c8f5aecee95e4a092dfe2efc313277ad"
 dependencies = [
- "nom",
+ "nom 5.1.2",
+ "num-bigint",
+ "num-traits",
+ "proc-macro-hack",
+]
+
+[[package]]
+name = "der-oid-macro"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bd17d13ecf875e704369fdbde242483ac769fc18f6af21e43d5a692a079732fc"
+dependencies = [
+ "nom 6.1.2",
  "num-bigint",
  "num-traits",
  "proc-macro-hack",
@@ -565,12 +589,25 @@ version = "4.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "caca07c50eaae94d43e21f4d14eca5543b6f5f5ce64715e9b7665ac5f5185b4e"
 dependencies = [
- "der-oid-macro",
- "nom",
+ "der-oid-macro 0.2.0",
+ "nom 5.1.2",
  "num-bigint",
  "num-traits",
  "proc-macro-hack",
- "rusticata-macros",
+ "rusticata-macros 2.1.0",
+]
+
+[[package]]
+name = "der-parser"
+version = "5.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "13e6cad1223a7b98b59275a56516ed8c40508d21284a32e404ed3fe2ae9a809a"
+dependencies = [
+ "der-oid-macro 0.3.0",
+ "nom 6.1.2",
+ "num-traits",
+ "proc-macro-hack",
+ "rusticata-macros 3.0.1",
 ]
 
 [[package]]
@@ -735,6 +772,12 @@ name = "fuchsia-zircon-sys"
 version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3dcaa9ae7725d12cdb85b3ad99a434db70b468c09ded17e012d86b5c1010f7a7"
+
+[[package]]
+name = "funty"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fed34cd105917e91daa4da6b3728c47b068749d6a62c59811f06ed2ac71d9da7"
 
 [[package]]
 name = "futures"
@@ -1360,6 +1403,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "nom"
+version = "6.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e7413f999671bd4745a7b624bd370a569fb6bc574b23c83a3c5ed2e453f3d5e2"
+dependencies = [
+ "bitvec",
+ "funty",
+ "lexical-core",
+ "memchr",
+ "version_check",
+]
+
+[[package]]
 name = "nuclei"
 version = "0.1.2-alpha.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1646,6 +1702,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "radium"
+version = "0.5.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "941ba9d78d8e2f7ce474c015eea4d9c6d25b6a3327f9832ee29a4de27f91bbb8"
+
+[[package]]
 name = "rand"
 version = "0.7.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1786,7 +1848,16 @@ version = "2.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8a9050636e8a1b487ba1fbe99114021cd7594dde3ce6ed95bfc1691e5b5367b"
 dependencies = [
- "nom",
+ "nom 5.1.2",
+]
+
+[[package]]
+name = "rusticata-macros"
+version = "3.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7390af60e66c44130b4c5ea85f2555b7ace835d73b4b889c704dc3cb4c0468c8"
+dependencies = [
+ "nom 6.1.2",
 ]
 
 [[package]]
@@ -2144,6 +2215,12 @@ dependencies = [
  "quote",
  "unicode-xid",
 ]
+
+[[package]]
+name = "tap"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "55937e1799185b12863d447f42597ed69d9928686b8d88a1df17376a097d8369"
 
 [[package]]
 name = "tempfile"
@@ -2674,6 +2751,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "wyz"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "85e60b0d1b5f99db2556934e21937020776a5d31520bf169e851ac44e6420214"
+
+[[package]]
 name = "x509-parser"
 version = "0.8.0-beta4"
 source = "git+https://github.com/wayofthepie/x509-parser.git?branch=aia-update#4b92eba85c942c62c3d46641be7412471cc2d807"
@@ -2681,11 +2764,11 @@ dependencies = [
  "base64 0.12.3",
  "chrono",
  "data-encoding",
- "der-oid-macro",
- "der-parser",
+ "der-oid-macro 0.2.0",
+ "der-parser 4.1.0",
  "lazy_static",
- "nom",
+ "nom 5.1.2",
  "num-bigint",
- "rusticata-macros",
+ "rusticata-macros 2.1.0",
  "rustversion",
 ]
